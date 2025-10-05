@@ -5,14 +5,14 @@ This module implements a Pure Decision Transformer that replaces the hybrid band
 architecture with a unified transformer-based approach for direct action prediction.
 
 Architecture:
-- StateEncoder: CNN backbone (reuses proven bandit architecture) 
-- ActionEmbedding: Handles 4101 action vocabulary (ACTION1-5 + coordinates)
+- StateEncoder: CNN backbone (reuses proven bandit architecture)
+- ActionEmbedding: Handles 4101 actions (ACTION1-5 + 64x64 coordinates)
 - PureDecisionTransformer: Interleaved state-action sequences → direct action classification
 - ActionSampler: Temperature sampling with action masking
 
 Key Features:
 - State-action sequences with local context (k=15-20 steps)
-- Direct action classification over full 4101 action space
+- Direct action classification over 4101 action space
 - Configurable loss functions (cross-entropy, selective, hybrid)
 - Temperature-based exploration
 - Reuses bandit CNN for spatial reasoning
@@ -105,13 +105,13 @@ class ActionEmbedding(nn.Module):
     
     def __init__(self, embed_dim=256):
         super().__init__()
-        # 4101 actions: ACTION1-5 (indices 0-4) + coordinates (indices 5-4100) + PAD (4101)
-        self.action_embedding = nn.Embedding(4102, embed_dim)  
+        # 4101 actions: ACTION1-5 (indices 0-4) + coordinates (indices 5-4100)
+        self.action_embedding = nn.Embedding(4101, embed_dim)  
         
     def forward(self, action_indices):
         """
         Args:
-            action_indices: [batch, seq_len] with values in [0, 4101] 
+            action_indices: [batch, seq_len] with values in [0, 4100]
         Returns:
             action_embeddings: [batch, seq_len, embed_dim]
         """
@@ -905,26 +905,30 @@ class PureDTAgent(Agent):
             return action
     
     def _build_inference_sequence(self, current_frame, context_length):
-        """Build state-action sequence for Pure DT inference."""
+        """Build state-action sequence for Decision Transformer inference."""
         # Get recent experiences up to context length
         available_context = min(int(context_length), len(self.experience_buffer))
         recent_experiences = list(self.experience_buffer)[-available_context:] if available_context > 0 else []
-        
+
         # Build states: recent states + current state
         states_list = []
         for exp in recent_experiences:
             states_list.append(torch.from_numpy(exp['state']).float())
         states_list.append(current_frame)  # Add current state
-        
+
         # Build actions: recent actions (no current action - we're predicting it)
         actions_list = []
         for exp in recent_experiences:
             actions_list.append(exp['action_idx'])
-        
-        # Pad if necessary to have at least 1 action
+
+        # Handle cold start: if no actions yet, create minimal sequence with one dummy action
+        # This is only needed to satisfy model input requirements, not for actual padding
         if len(actions_list) == 0:
-            actions_list.append(0)  # PAD action
-            states_list = [torch.zeros_like(current_frame)] + states_list  # Add padding state
+            # Use ACTION1 (index 0) as dummy action for cold start
+            # The model won't rely on this since there's no history anyway
+            actions_list.append(0)
+            # Add a zero state to maintain sequence structure [s0, a0, s1]
+            states_list = [torch.zeros_like(current_frame)] + states_list
         
         # Convert to tensors
         states = torch.stack(states_list).unsqueeze(0).to(self.device)  # [1, seq_len+1, 16, 64, 64]

@@ -42,8 +42,7 @@ DEFAULT_PURE_DT_CONFIG = {
     'max_training_experiences': 64,  # Maximum sequence length for training
     'context_length': 5,       # Context window for training/inference
     'sequence_stride': 1,       # Stride for creating training sequences
-    'padding_action_idx': 4101, # Action index used for padding (PAD token)
-    
+
     # Model Initialization
     'freeze_cnn_backbone': False,  # Whether to freeze CNN backbone during training
     'use_pretrained_cnn': False,    # Whether to initialize from bandit CNN weights

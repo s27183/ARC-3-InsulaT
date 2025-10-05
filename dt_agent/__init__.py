@@ -7,26 +7,26 @@ approach for direct action prediction.
 """
 
 from .config import (
-    load_pure_dt_config,
+    load_dt_config,
     get_loss_config_summary,
     validate_config,
-    DEFAULT_PURE_DT_CONFIG,
+    DEFAULT_DT_CONFIG,
     CROSS_ENTROPY_CONFIG,
     SELECTIVE_CONFIG,
     HYBRID_CONFIG
 )
 
-from .dt_agent import PureDTAgent
+from .dt_agent import DTAgent
 
 __all__ = [
     # Configuration
-    'load_pure_dt_config',
+        'load_dt_config',
     'get_loss_config_summary', 
     'validate_config',
-    'DEFAULT_PURE_DT_CONFIG',
+        'DEFAULT_DT_CONFIG',
     'CROSS_ENTROPY_CONFIG',
     'SELECTIVE_CONFIG', 
     'HYBRID_CONFIG',
     # Model,
-    "PureDTAgent"
+        "DTAgent"
 ]

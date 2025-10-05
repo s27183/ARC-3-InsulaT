@@ -6,7 +6,7 @@ This example demonstrates how to use the PureDTAgent directly without
 going through the custom_agents/action.py module.
 """
 
-from dt_agent import PureDTAgent, load_pure_dt_config
+from dt_agent import DTAgent, load_dt_config
 
 
 def run_pure_dt_agent_example():
@@ -25,7 +25,7 @@ def run_pure_dt_agent_example():
     try:
         # Initialize the Pure DT Agent - fully self-contained
         print("🤖 Initializing Pure Decision Transformer Agent...")
-        agent = PureDTAgent(**agent_params)
+        agent = DTAgent(**agent_params)
         
         # The agent is now ready to use with the ARC-AGI-3 framework
         print(f"✅ Pure DT Agent initialized successfully!")
@@ -37,7 +37,7 @@ def run_pure_dt_agent_example():
         
         # Example configuration customization
         print("\n🔧 Configuration options:")
-        config = load_pure_dt_config()
+        config = load_dt_config()
         print(f"   - Available loss types: cross_entropy, selective, hybrid")
         print(f"   - Current loss type: {config['loss_type']}")
         print(f"   - Embed dimension: {config['embed_dim']}")
