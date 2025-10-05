@@ -56,7 +56,7 @@ except ImportError:
     def get_environment_directory(base_dir, game_id): return os.path.join(base_dir, game_id)
     def save_action_visualization(*args): pass
 
-from .config import load_pure_dt_config, get_loss_config_summary, validate_config
+from .config import load_dt_config, get_loss_config_summary, validate_config
 
 
 class StateEncoder(nn.Module):
@@ -118,7 +118,7 @@ class ActionEmbedding(nn.Module):
         return self.action_embedding(action_indices)
 
 
-class PureDecisionTransformer(nn.Module):
+class DecisionTransformer(nn.Module):
     """End-to-end transformer for ARC-AGI action prediction using state-action sequences."""
     
     def __init__(self, embed_dim=256, num_layers=4, num_heads=8, max_context_len=20):
@@ -235,7 +235,7 @@ class PureDecisionTransformer(nn.Module):
 
 
 
-class PureDTAgent(Agent):
+class DTAgent(Agent):
     """Self-contained Pure Decision Transformer Agent for ARC-AGI-3.
     
     This agent uses a unified transformer architecture for direct action prediction,
@@ -294,7 +294,7 @@ class PureDTAgent(Agent):
         self.num_colours = 16
         
         # Load Pure DT configuration
-        self.pure_dt_config = load_pure_dt_config(device=str(self.device))
+        self.pure_dt_config = load_dt_config(device=str(self.device))
         validate_config(self.pure_dt_config)
         
         # Log configuration
@@ -303,7 +303,7 @@ class PureDTAgent(Agent):
         print(f"Pure DT initialized: {config_summary}")
         
         # Initialize Pure DT model
-        self.pure_dt_model = PureDecisionTransformer(
+        self.pure_dt_model = DecisionTransformer(
             embed_dim=self.pure_dt_config['embed_dim'],
             num_layers=self.pure_dt_config['num_layers'],
             num_heads=self.pure_dt_config['num_heads'],
@@ -629,7 +629,7 @@ class PureDTAgent(Agent):
             print("Cleared experience buffer - new level reached")
             
             # Reset Pure DT model and optimizer for new level
-            self.pure_dt_model = PureDecisionTransformer(
+            self.pure_dt_model = DecisionTransformer(
                 embed_dim=self.pure_dt_config['embed_dim'],
                 num_layers=self.pure_dt_config['num_layers'],
                 num_heads=self.pure_dt_config['num_heads'],

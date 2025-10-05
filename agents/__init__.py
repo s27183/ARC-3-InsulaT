@@ -30,7 +30,7 @@ for rec in Recorder.list():
 AVAILABLE_AGENTS["reasoningagent"] = ReasoningAgent
 
 __all__ = [
-        "DTAgent",
+    "DTAgent",
     "Swarm",
     "Random",
     "LangGraphFunc",

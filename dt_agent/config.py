@@ -10,7 +10,7 @@ from typing import Dict, Any
 
 
 # Default configuration for Pure Decision Transformer
-DEFAULT_PURE_DT_CONFIG = {
+DEFAULT_DT_CONFIG = {
     # Model Architecture
     'embed_dim': 256,           # Transformer embedding dimension
     'num_layers': 4,            # Number of transformer layers
@@ -62,7 +62,7 @@ DEFAULT_PURE_DT_CONFIG = {
 
 # Device-specific configurations
 CPU_PURE_DT_CONFIG = {
-    **DEFAULT_PURE_DT_CONFIG,
+    **DEFAULT_DT_CONFIG,
     'embed_dim': 128,           # Smaller model for CPU
     'num_layers': 2,            # Fewer layers for CPU
     'context_length': 10,       # Shorter context for CPU
@@ -70,7 +70,7 @@ CPU_PURE_DT_CONFIG = {
 }
 
 GPU_PURE_DT_CONFIG = {
-    **DEFAULT_PURE_DT_CONFIG, 
+    **DEFAULT_DT_CONFIG,
     'embed_dim': 512,           # Larger model for GPU
     'num_layers': 6,            # More layers for GPU
     'context_length': 20,       # Longer context for GPU
@@ -79,21 +79,21 @@ GPU_PURE_DT_CONFIG = {
 
 # Loss function specific configurations
 CROSS_ENTROPY_CONFIG = {
-    **DEFAULT_PURE_DT_CONFIG,
+    **DEFAULT_DT_CONFIG,
     'loss_type': 'cross_entropy',
     'learning_rate': 1e-4,      # Standard learning rate for dense gradients
     'epochs_per_training': 1,   # Single epoch for fast dense updates
 }
 
 SELECTIVE_CONFIG = {
-    **DEFAULT_PURE_DT_CONFIG,
+    **DEFAULT_DT_CONFIG,
     'loss_type': 'selective', 
     'learning_rate': 5e-4,      # Higher learning rate for sparse gradients
     'epochs_per_training': 3,   # More epochs for sparse selective updates
 }
 
 HYBRID_CONFIG = {
-    **DEFAULT_PURE_DT_CONFIG,
+    **DEFAULT_DT_CONFIG,
     'loss_type': 'hybrid',
     'selective_confidence_threshold': 0.8,
     'learning_rate': 2e-4,      # Balanced learning rate
@@ -101,7 +101,7 @@ HYBRID_CONFIG = {
 }
 
 BANDIT_CONFIG = {
-    **DEFAULT_PURE_DT_CONFIG,
+    **DEFAULT_DT_CONFIG,
     'loss_type': 'bandit',
     'learning_rate': 1e-4,      # Same as original bandit
     'epochs_per_training': 1,   # Single epoch like original bandit
@@ -111,7 +111,7 @@ BANDIT_CONFIG = {
 }
 
 
-def load_pure_dt_config(device: str = None, loss_type: str = None) -> Dict[str, Any]:
+def load_dt_config(device: str = None, loss_type: str = None) -> Dict[str, Any]:
     """Load Pure DT configuration based on device and loss type preferences.
     
     Args:
@@ -122,7 +122,7 @@ def load_pure_dt_config(device: str = None, loss_type: str = None) -> Dict[str, 
         Configuration dictionary
     """
     # Start with default config
-    config = DEFAULT_PURE_DT_CONFIG.copy()
+    config = DEFAULT_DT_CONFIG.copy()
     
     # Apply device-specific config
     if device == 'cpu':
@@ -220,14 +220,14 @@ def validate_config(config: Dict[str, Any]) -> bool:
 
 # Export main functions
 __all__ = [
-    'DEFAULT_PURE_DT_CONFIG',
+        'DEFAULT_DT_CONFIG',
     'CPU_PURE_DT_CONFIG', 
     'GPU_PURE_DT_CONFIG',
     'CROSS_ENTROPY_CONFIG',
     'SELECTIVE_CONFIG',
     'HYBRID_CONFIG',
     'BANDIT_CONFIG',
-    'load_pure_dt_config',
+        'load_dt_config',
     'get_loss_config_summary',
     'validate_config'
 ]
