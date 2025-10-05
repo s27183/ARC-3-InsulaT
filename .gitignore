@@ -7,10 +7,11 @@
 # Cache
 .ruff_cache/
 .mypy_cache/
-**/__pycache__/
+**/__pycache__
 
 # IDE settings
 .vscode/
+.idea/
 
 # Recordings
 recordings/*.recording.jsonl
@@ -19,3 +20,9 @@ tests/recordings/not-a-recording.txt
 
 # Long-term memory
 memory.db
+
+__pycache__/
+logs.log
+recordings/
+logs
+runs
