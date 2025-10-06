@@ -21,7 +21,7 @@ Key Features:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple, List, Any
+from typing import Any
 import numpy as np
 import random
 import time
@@ -32,31 +32,11 @@ import hashlib
 from collections import deque
 from torch.utils.tensorboard import SummaryWriter
 
-# Add paths for ARC-AGI-3 framework integration
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ARC-AGI-3-Agents"))
-try:
-    from agents.agent import Agent
-    from agents.structs import FrameData, GameAction, GameState
-except ImportError:
-    # Fallback for development/testing
-    Agent = object
-    FrameData = None
-    GameAction = None
-    GameState = None
+from agents.agent import Agent
+from agents.structs import FrameData, GameAction, GameState
 
-# Add parent directory for utilities
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-try:
-    from utils import setup_experiment_directory, setup_logging_for_experiment, get_environment_directory
-    from view_utils import save_action_visualization
-except ImportError:
-    # Provide fallback implementations
-    def setup_experiment_directory(): return "runs", "logs.log"
-    def setup_logging_for_experiment(log_file): pass
-    def get_environment_directory(base_dir, game_id): return os.path.join(base_dir, game_id)
-    def save_action_visualization(*args): pass
-
-from .config import load_dt_config, get_loss_config_summary, validate_config
+from dt_agent.utils import setup_experiment_directory, setup_logging, get_environment_directory
+from dt_agent.config import load_dt_config, get_loss_config_summary, validate_config
 
 
 class StateEncoder(nn.Module):
@@ -236,17 +216,15 @@ class DecisionTransformer(nn.Module):
 
 
 class DTAgent(Agent):
-    """Self-contained Pure Decision Transformer Agent for ARC-AGI-3.
+    """Self-contained Decision Transformer Agent for ARC-AGI-3.
     
-    This agent uses a unified transformer architecture for direct action prediction,
-    replacing the hybrid bandit-DT approach with a single end-to-end model.
+    This agent uses a unified transformer architecture for direct action prediction.
     
     Features:
     - State-action sequence modeling with local context
-    - Configurable loss functions (cross-entropy, selective, hybrid)
     - Temperature-based exploration with action masking
     - Experience buffer with uniqueness tracking
-    - Integrated visualization and logging
+    - Integrated logging
     - Full Agent interface compatibility
     """
     
@@ -260,16 +238,16 @@ class DTAgent(Agent):
         torch.manual_seed(seed % (2**32 - 1))
         self.start_time = time.time()
         
-        # Override MAX_ACTIONS - no limit for Pure DT
+        # Override MAX_ACTIONS - no limit for DT
         self.MAX_ACTIONS = float("inf")
         
         # Device configuration
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Pure DT Agent using device: {self.device}")
+        print(f"DT Agent using device: {self.device}")
         
         # Setup experiment directory and logging
         self.base_dir, log_file = setup_experiment_directory()
-        setup_logging_for_experiment(log_file)
+        setup_logging(log_file)
         
         # Get environment-specific directory
         env_dir = get_environment_directory(self.base_dir, self.game_id)
@@ -280,7 +258,7 @@ class DTAgent(Agent):
         self.current_score = -1
         
         # Setup logger
-        self.logger = logging.getLogger(f"PureDTAgent_{self.game_id}")
+        self.logger = logging.getLogger(f"DTAgent_{self.game_id}")
         
         # Configuration for visualization and logging
         self.save_action_visualizations = False  # Set to True to enable image generation
@@ -293,16 +271,16 @@ class DTAgent(Agent):
         self.num_coordinates = self.grid_size * self.grid_size
         self.num_colours = 16
         
-        # Load Pure DT configuration
+        # Load DT configuration
         self.pure_dt_config = load_dt_config(device=str(self.device))
         validate_config(self.pure_dt_config)
         
         # Log configuration
         config_summary = get_loss_config_summary(self.pure_dt_config)
-        self.logger.info(f"Pure DT initialized: {config_summary}")
-        print(f"Pure DT initialized: {config_summary}")
+        self.logger.info(f"DT initialized: {config_summary}")
+        print(f"DT initialized: {config_summary}")
         
-        # Initialize Pure DT model
+        # Initialize DT model
         self.pure_dt_model = DecisionTransformer(
             embed_dim=self.pure_dt_config['embed_dim'],
             num_layers=self.pure_dt_config['num_layers'],
@@ -337,8 +315,8 @@ class DTAgent(Agent):
             GameAction.ACTION5,
         ]
         
-        print(f"Pure DT Agent logging to: {tensorboard_dir}")
-        self.logger.info(f"Pure DT Agent initialized for game_id: {self.game_id}")
+        print(f"DT Agent logging to: {tensorboard_dir}")
+        self.logger.info(f"DT Agent initialized for game_id: {self.game_id}")
         if self.save_action_visualizations:
             self.logger.info(
                 f"Action visualizations enabled: saving {self.vis_samples_per_save} samples every {self.vis_save_frequency} steps"
@@ -371,7 +349,7 @@ class DTAgent(Agent):
         hash_input = frame_bytes + str(action_idx).encode("utf-8")
         return hashlib.md5(hash_input).hexdigest()
     
-    def _train_pure_dt(self):
+    def _train_dt_model(self):
         """Train the Pure Decision Transformer on collected experiences using configurable loss."""
         if len(self.experience_buffer) < self.pure_dt_config['min_buffer_size']:
             return
@@ -400,7 +378,7 @@ class DTAgent(Agent):
         num_sequences = len(sequences)
         num_positive_rewards = (rewards_batch > 0).sum().item()
         loss_type = self.pure_dt_config['loss_type']
-        self.logger.info(f"🎯 Starting Pure DT training: {num_sequences} sequences, {num_positive_rewards} positive rewards, loss_type={loss_type}")
+        self.logger.info(f"🎯 Starting DT training: {num_sequences} sequences, {num_positive_rewards} positive rewards, loss_type={loss_type}")
         
         # Training loop with configurable epochs
         for epoch in range(self.pure_dt_config['epochs_per_training']):
@@ -428,13 +406,13 @@ class DTAgent(Agent):
         # Log training completion
         final_loss = loss.item() if 'loss' in locals() else 0.0
         final_accuracy = metrics.get('accuracy', 0.0) if 'metrics' in locals() else 0.0
-        self.logger.info(f"✅ Pure DT training completed: final_loss={final_loss:.4f}, accuracy={final_accuracy:.3f}")
+        self.logger.info(f"✅ DT training completed: final_loss={final_loss:.4f}, accuracy={final_accuracy:.3f}")
         
         # Clean up GPU memory
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
     
     def _create_training_sequences(self, sample_size):
-        """Create state-action sequences for Pure DT training."""
+        """Create state-action sequences for DT training."""
         sequences = []
         context_len = self.pure_dt_config['context_length']
         
@@ -480,7 +458,7 @@ class DTAgent(Agent):
         return sequences
     
     def _compute_pure_dt_loss(self, action_logits, targets, rewards):
-        """Compute configurable loss for Pure DT training."""
+        """Compute configurable loss for DT training."""
         loss_type = self.pure_dt_config['loss_type']
         
         if loss_type == 'cross_entropy':
@@ -536,67 +514,38 @@ class DTAgent(Agent):
             if positive_mask.sum() > 0:
                 loss = F.cross_entropy(action_logits[positive_mask], targets[positive_mask])
                 metrics = {
-                    'accuracy': (action_logits.argmax(dim=1) == targets).float().mean(),
+                    'accuracy': ((action_logits.argmax(dim=1)>0.5) == targets).float().mean(),
                     'positive_samples': positive_mask.sum().float()
                 }
             else:
                 loss = torch.tensor(0.0, device=action_logits.device, requires_grad=True)
                 metrics = {'accuracy': 0.0, 'positive_samples': 0.0}
-                
-        elif loss_type == 'hybrid':
-            # Hybrid loss - confidence-based interpolation
-            threshold = self.pure_dt_config['selective_confidence_threshold']
-            
-            # Compute both losses
-            ce_loss = F.cross_entropy(action_logits, targets)
-            
-            positive_mask = rewards > 0
-            if positive_mask.sum() > 0:
-                selective_loss = F.cross_entropy(action_logits[positive_mask], targets[positive_mask])
-            else:
-                selective_loss = torch.tensor(0.0, device=action_logits.device)
-            
-            # Confidence-based weighting (using max probability as confidence proxy)
-            confidences = F.softmax(action_logits, dim=1).max(dim=1)[0]
-            high_confidence_mask = confidences > threshold
-            
-            # Interpolate based on confidence
-            if high_confidence_mask.sum() > 0:
-                alpha = high_confidence_mask.float().mean()  # Fraction of high-confidence samples
-                loss = alpha * selective_loss + (1 - alpha) * ce_loss
-            else:
-                loss = ce_loss
-                
-            metrics = {
-                'accuracy': (action_logits.argmax(dim=1) == targets).float().mean(),
-                'high_confidence_frac': high_confidence_mask.float().mean(),
-                'mean_confidence': confidences.mean()
-            }
+
         
         return loss, metrics
     
     def _log_pure_dt_metrics(self, loss, metrics, epoch):
-        """Log Pure DT training metrics to tensorboard."""
+        """Log DT training metrics to tensorboard."""
         step = self.action_counter
         
-        self.writer.add_scalar("PureDT/loss", loss.item(), step)
-        self.writer.add_scalar("PureDT/accuracy", metrics.get('accuracy', 0), step)
+        self.writer.add_scalar("DT/loss", loss.item(), step)
+        self.writer.add_scalar("DT/accuracy", metrics.get('accuracy', 0), step)
         
         # Log bandit-specific metrics if available
         if 'main_loss' in metrics:
-            self.writer.add_scalar("PureDT/main_loss", metrics['main_loss'], step)
+            self.writer.add_scalar("DT/main_loss", metrics['main_loss'], step)
         if 'action_entropy' in metrics:
-            self.writer.add_scalar("PureDT/action_entropy", metrics['action_entropy'], step)
+            self.writer.add_scalar("DT/action_entropy", metrics['action_entropy'], step)
         if 'coord_entropy' in metrics:
-            self.writer.add_scalar("PureDT/coord_entropy", metrics['coord_entropy'], step)
+            self.writer.add_scalar("DT/coord_entropy", metrics['coord_entropy'], step)
         
         # Loss-type specific metrics
         if 'positive_samples' in metrics:
-            self.writer.add_scalar("PureDT/positive_samples", metrics['positive_samples'], step)
+            self.writer.add_scalar("DT/positive_samples", metrics['positive_samples'], step)
         if 'high_confidence_frac' in metrics:
-            self.writer.add_scalar("PureDT/high_confidence_frac", metrics['high_confidence_frac'], step)
+            self.writer.add_scalar("DT/high_confidence_frac", metrics['high_confidence_frac'], step)
         if 'mean_confidence' in metrics:
-            self.writer.add_scalar("PureDT/mean_confidence", metrics['mean_confidence'], step)
+            self.writer.add_scalar("DT/mean_confidence", metrics['mean_confidence'], step)
     
     def _has_time_elapsed(self) -> bool:
         """Check if 8 hours have elapsed since start."""
@@ -610,56 +559,14 @@ class DTAgent(Agent):
             self._has_time_elapsed(),
         ])
     
-    def choose_action(self, frames: list[FrameData], latest_frame: FrameData) -> GameAction:
-        """Choose action using Pure Decision Transformer predictions."""
-        # Check if score has changed and log score at action count
-        if latest_frame.score != self.current_score:
-            if self.save_action_visualizations:
-                self.writer.add_scalar("Agent/score", latest_frame.score, self.action_counter)
-            
-            self.logger.info(
-                f"Score changed from {self.current_score} to {latest_frame.score} at action {self.action_counter}"
-            )
-            print(f"Score changed from {self.current_score} to {latest_frame.score} at action {self.action_counter}")
-            
-            # Clear experience buffer when reaching new level
-            self.experience_buffer.clear()
-            self.experience_hashes.clear()
-            self.logger.info("Cleared experience buffer - new level reached")
-            print("Cleared experience buffer - new level reached")
-            
-            # Reset Pure DT model and optimizer for new level
-            self.pure_dt_model = DecisionTransformer(
-                embed_dim=self.pure_dt_config['embed_dim'],
-                num_layers=self.pure_dt_config['num_layers'],
-                num_heads=self.pure_dt_config['num_heads'],
-                max_context_len=self.pure_dt_config['max_context_len']
-            ).to(self.device)
-            
-            self.optimizer = torch.optim.Adam(
-                self.pure_dt_model.parameters(),
-                lr=self.pure_dt_config['learning_rate'],
-                weight_decay=self.pure_dt_config['weight_decay']
-            )
-            
-            self.logger.info("Reset Pure DT model and optimizer for new level")
-            print("Reset Pure DT model and optimizer for new level")
-            
-            # Reset previous tracking
-            self.prev_frame = None
-            self.prev_action_idx = None
-            self.current_score = latest_frame.score
-        
-        if latest_frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
-            # Reset previous tracking on game reset
-            self.prev_frame = None
-            self.prev_action_idx = None
-            action = GameAction.RESET
-            action.reasoning = "Game needs reset."
-            return action
-        
+    def choose_action(self, frames: list[FrameData], latest_frame_data: FrameData) -> GameAction:
+        """Choose action using Decision Transformer predictions."""
+
+        # Reset the game when certain conditions are met
+        self._reset_if_required(latest_frame_data=latest_frame_data)
+
         # Convert current frame to tensor
-        current_frame = self._frame_to_tensor(latest_frame)
+        current_frame = self._frame_to_tensor(latest_frame_data)
         
         # If frame processing failed, reset tracking and return random action
         if current_frame is None:
@@ -667,84 +574,17 @@ class DTAgent(Agent):
             self.prev_frame = None
             self.prev_action_idx = None
             action = random.choice(self.action_list[:5])  # Random ACTION1-ACTION5
-            action.reasoning = f"Skipped weird frame, random {action.value}"
+            action.reasoning = f"Skipped error frame, use a random action - {action.value}"
             return action
         
-        # Create experience from previous action if we have previous data
-        if self.prev_frame is not None:
-            # Compute hash for uniqueness check
-            experience_hash = self._compute_experience_hash(self.prev_frame, self.prev_action_idx)
-            
-            # Only store if unique
-            if experience_hash not in self.experience_hashes:
-                # Convert current frame to numpy bool for comparison
-                current_frame_np = current_frame.cpu().numpy().astype(bool)
-                frame_changed = not np.array_equal(self.prev_frame, current_frame_np)
-                
-                experience = {
-                    "state": self.prev_frame,  # Already numpy bool
-                    "action_idx": self.prev_action_idx,  # Unified action index
-                    "reward": 1.0 if frame_changed else 0.0,
-                }
-                self.experience_buffer.append(experience)
-                self.experience_hashes.add(experience_hash)
-                
-                # Log replay buffer size periodically
-                if self.save_action_visualizations:
-                    self.writer.add_scalar(
-                        "Agent/replay_buffer_size", len(self.experience_buffer), self.action_counter
-                    )
-                    self.writer.add_scalar(
-                        "Agent/replay_unique_hashes", len(self.experience_hashes), self.action_counter
-                    )
+        # Store unique experience
+        self._store_experience(current_frame)
         
-        # Get action predictions from Pure DT model (following bandit pattern exactly)
-        with torch.no_grad():
-            # Build state-action sequence and get logits
-            context_length = self.pure_dt_config['context_length']
-            
-            # Cold start - random valid action if no experience
-            if len(self.experience_buffer) < 1:
-                selected_action = self._random_valid_action(latest_frame.available_actions)
-                # Set default values for tracking
-                if selected_action.value <= 5:
-                    action_idx = selected_action.value - 1
-                    coords = None
-                    coord_idx = None
-                else:
-                    action_idx = 5
-                    coords = (0, 0)
-                    coord_idx = 0
-            else:
-                # Build state-action sequence for inference
-                states, actions = self._build_inference_sequence(current_frame, context_length)
-                
-                # Get action logits from Pure DT
-                combined_logits = self.pure_dt_model(states, actions)  # [1, 4101]
-                combined_logits = combined_logits.squeeze(0)  # (4101,)
-                
-                # Sample from combined action space (following bandit pattern exactly)
-                action_idx, coords, coord_idx, all_probs = (
-                    self._sample_from_combined_output(
-                        combined_logits, latest_frame.available_actions
-                    )
-                )
-                
-                # Store probabilities for visualization
-                self._last_all_probs = all_probs
-                
-                # Create GameAction directly (following bandit pattern exactly)
-                if action_idx < 5:
-                    # Selected ACTION1-ACTION5
-                    selected_action = self.action_list[action_idx]
-                    selected_action.reasoning = "Pure DT prediction"
-                else:
-                    # Selected a coordinate - treat as ACTION6 (following bandit pattern exactly)
-                    selected_action = GameAction.ACTION6
-                    y, x = coords
-                    selected_action.set_data({"x": x, "y": y})
-                    selected_action.reasoning = "Pure DT coordinate prediction"
-                    self.logger.info(f"📍 ACTION6 selected: coordinates ({x}, {y}) -> coord_idx={coord_idx}")
+        # Get action predictions from DT model (following bandit pattern exactly)
+        action_idx, coord_idx, selected_action = self.select_action(
+                latest_frame_torch=current_frame,
+                latest_frame_data= latest_frame_data
+        )
         
         # Store current frame and action for next experience creation
         self.prev_frame = current_frame.cpu().numpy().astype(bool)
@@ -757,75 +597,145 @@ class DTAgent(Agent):
         # Increment action counter
         self.action_counter += 1
         
-        # Train Pure DT model periodically
+        # Train DT model periodically
         if self.action_counter % self.train_frequency == 0:
             buffer_size = len(self.experience_buffer)
             if buffer_size >= self.pure_dt_config['min_buffer_size']:
-                self.logger.info(f"🤖 Training Pure DT model... (buffer size: {buffer_size})")
-                self._train_pure_dt()
+                self.logger.info(f"🤖 Training DT model... (buffer size: {buffer_size})")
+                self._train_dt_model()
             else:
                 self.logger.debug(f"Skipping training: buffer size {buffer_size} < min_buffer_size {self.pure_dt_config['min_buffer_size']}")
-        
-        # Save action probability visualizations periodically
-        if (
-            self.save_action_visualizations
-            and self.action_counter % self.vis_save_frequency == 0
-            and hasattr(self, '_last_all_probs')
-        ):
-            all_probs = self._last_all_probs
-            # Generate action visualizations with current frame and probabilities
-            for i in range(self.vis_samples_per_save):
-                # Use coordinate index for visualization
-                click_idx = coord_idx if coord_idx is not None else -1
-                
-                # For visualization, create modified action probabilities including click sum
-                action_probs_viz = np.zeros(6)  # 6 elements for visualization compatibility
-                action_probs_viz[:5] = all_probs[:5]  # First 5 action probabilities
-                action_probs_viz[5] = (
-                    all_probs[5:].sum() / self.num_coordinates
-                )  # Divide click sum by number of pixels
-                
-                # Always create heatmap from 64x64 probabilities (raw values 0-1, not normalized)
-                click_heatmap = all_probs[5:].reshape(self.grid_size, self.grid_size)
-                
-                save_action_visualization(
-                    latest_frame,
-                    action_probs_viz,
-                    click_heatmap,  # Always pass heatmap
-                    action_idx if action_idx < 5 else 5,  # Map coordinate selection to ACTION6
-                    click_idx,
-                    self.log_dir,
-                    self.action_counter,
-                    sample_id=i + 1,
-                )
-        
-        # Log metrics using stored probabilities from action selection
-        if self.save_action_visualizations and hasattr(self, '_last_all_probs'):
-            all_probs = self._last_all_probs
-            
-            self.writer.add_scalar("Agent/total_actions", self.action_counter, self.action_counter)
-            
-            # Extract action and coordinate probabilities for logging
-            action_probs_only = all_probs[:5]
-            coord_probs_only = all_probs[5:]
-            
-            if action_idx < 5:
-                self.writer.add_scalar(
-                    "Agent/selected_action_prob", action_probs_only[action_idx], self.action_counter
-                )
-            else:
-                # Selected coordinate action - log coordinate probability
-                self.writer.add_scalar(
-                    "Agent/selected_coord_prob", coord_probs_only[coord_idx], self.action_counter
-                )
-                self.writer.add_scalar(
-                    "Agent/coord_entropy",
-                    -(coord_probs_only * np.log(coord_probs_only + 1e-8)).sum(),
-                    self.action_counter,
-                )
-        
+
         return selected_action
-    
+
+    def _reset_if_required(self, latest_frame_data: FrameData) -> None | GameAction:
+        # Check if score has changed and log score at action count
+
+        if latest_frame_data.score != self.current_score:
+            if self.save_action_visualizations:
+                self.writer.add_scalar("Agent/score", latest_frame_data.score, self.action_counter)
+
+            self.logger.info(
+                f"Score changed from {self.current_score} to {latest_frame_data.score} at action {self.action_counter}"
+            )
+            print(f"Score changed from {self.current_score} to {latest_frame_data.score} at action {self.action_counter}")
+
+            # Clear experience buffer when reaching new level
+            self.experience_buffer.clear()
+            self.experience_hashes.clear()
+            self.logger.info("Cleared experience buffer - new level reached")
+            print("Cleared experience buffer - new level reached")
+
+            # Reset DT model and optimizer for new level
+            self.pure_dt_model = DecisionTransformer(
+                embed_dim=self.pure_dt_config['embed_dim'],
+                num_layers=self.pure_dt_config['num_layers'],
+                num_heads=self.pure_dt_config['num_heads'],
+                max_context_len=self.pure_dt_config['max_context_len']
+            ).to(self.device)
+
+            self.optimizer = torch.optim.Adam(
+                self.pure_dt_model.parameters(),
+                lr=self.pure_dt_config['learning_rate'],
+                weight_decay=self.pure_dt_config['weight_decay']
+            )
+
+            self.logger.info("Reset DT model and optimizer for new level")
+            print("Reset DT model and optimizer for new level")
+
+            # Reset previous tracking
+            self.prev_frame = None
+            self.prev_action_idx = None
+            self.current_score = latest_frame_data.score
+
+        if latest_frame_data.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
+            # Reset previous tracking on game reset
+            self.prev_frame = None
+            self.prev_action_idx = None
+            action = GameAction.RESET
+            action.reasoning = "Game needs reset."
+            return action
+
+    def _store_experience(self, latest_frame: torch.Tensor):
+        if self.prev_frame is not None:
+            # Compute hash for uniqueness check
+            experience_hash = self._compute_experience_hash(self.prev_frame, self.prev_action_idx)
+
+            # Only store if unique
+            if experience_hash not in self.experience_hashes:
+                # Convert current frame to numpy bool for comparison
+                latest_frame_np = latest_frame.cpu().numpy().astype(bool)
+                frame_changed = not np.array_equal(self.prev_frame, latest_frame_np)
+
+                experience = {
+                    "state": self.prev_frame,  # Already numpy bool
+                    "action_idx": self.prev_action_idx,  # Unified action index
+                    "reward": 1.0 if frame_changed else 0.0,
+                }
+                self.experience_buffer.append(experience)
+                self.experience_hashes.add(experience_hash)
+
+                # Log replay buffer size periodically
+                if self.save_action_visualizations:
+                    self.writer.add_scalar(
+                        "Agent/replay_buffer_size", len(self.experience_buffer), self.action_counter
+                    )
+                    self.writer.add_scalar(
+                        "Agent/replay_unique_hashes", len(self.experience_hashes), self.action_counter
+                    )
+
+    def select_action(self, latest_frame_torch: torch.Tensor, latest_frame_data: FrameData) -> tuple[int, int, GameAction]:
+        with torch.no_grad():
+            # Build state-action sequence and get logits
+            context_length = self.pure_dt_config['context_length']
+
+            # Cold start - random valid action if no experience
+            if len(self.experience_buffer) < 1:
+                selected_action = self._random_valid_action(latest_frame_data.available_actions)
+                # Set default values for tracking
+                if selected_action.value <= 5:
+                    action_idx = selected_action.value - 1
+                    coords = None
+                    coord_idx = None
+                else:
+                    action_idx = 5
+                    coords = (0, 0)
+                    coord_idx = 0
+            else:
+                # Build state-action sequence for inference
+                states, actions = self._build_inference_sequence(
+                        latest_frame_torch, context_length
+                )
+
+                # Get action logits from DT
+                combined_logits = self.pure_dt_model(states, actions)  # [1, 4101]
+                combined_logits = combined_logits.squeeze(0)  # (4101,)
+
+                # Sample from combined action space (following bandit pattern exactly)
+                action_idx, coords, coord_idx, all_probs = (
+                    self._sample_from_combined_output(
+                        combined_logits, latest_frame_data.available_actions
+                    )
+                )
+
+                # Store probabilities for visualization
+                self._last_all_probs = all_probs
+
+                # Create GameAction directly (following bandit pattern exactly)
+                if action_idx < 5:
+                    # Selected ACTION1-ACTION5
+                    selected_action = self.action_list[action_idx]
+                    selected_action.reasoning = "DT prediction"
+                else:
+                    # Selected a coordinate - treat as ACTION6 (following bandit pattern exactly)
+                    selected_action = GameAction.ACTION6
+                    y, x = coords
+                    selected_action.set_data({"x": x, "y": y})
+                    selected_action.reasoning = "DT coordinate prediction"
+                    self.logger.info(f"📍 ACTION6 selected: coordinates ({x}, {y}) -> coord_idx={coord_idx}")
+
+        return action_idx, coord_idx, selected_action
+
     def _sample_from_combined_output(
         self, combined_logits: torch.Tensor, available_actions=None
     ) -> tuple[int, tuple, int, np.ndarray]:
