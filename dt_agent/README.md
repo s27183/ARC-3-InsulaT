@@ -10,16 +10,32 @@ The Decision Transformer (DT) agent is an end-to-end transformer model that dire
 
 ### Core Components
 
-#### 1. **StateEncoder** (dt_agent.py:62-100)
-- **Purpose**: Encodes 64�64 grid states into vector representations
-- **Architecture**: CNN backbone with 4 convolutional layers
-  - Conv1: 16 � 32 channels
-  - Conv2: 32 � 64 channels
-  - Conv3: 64 � 128 channels
-  - Conv4: 128 � 256 channels
-- **Output**: Global spatial pooling � linear projection to embedding dimension
-- **Input**: `[batch, 16, 64, 64]` one-hot encoded grids
+#### 1. **ViTStateEncoder** (dt_agent.py:107-266)
+- **Purpose**: Encodes 64×64 grid states into vector representations using Vision Transformer with learned cell embeddings
+- **Architecture**: Pure transformer with patch-based encoding and learned color representations
+  - **Learned cell embeddings**: Each color value (0-15) → learned embedding vector (cell_embed_dim)
+  - **Patch extraction**: 8×8 patches (creates 64 patches from 64×64 grid)
+    - Each patch contains 64 integer cell values (8×8)
+    - **Memory efficient**: 64 cells per patch vs 1024 values with one-hot encoding (16× reduction)
+  - **Cell aggregation**: Mean pooling over 64 cell embeddings per patch
+  - **Patch embedding**: Aggregated cell embeddings (cell_embed_dim) → embed_dim via linear projection
+  - **2D positional embeddings**: Learnable 8×8 grid positions added to patch embeddings
+  - **CLS token**: Prepended special token for global aggregation (optional: can use global pooling)
+  - **Transformer encoder**: 4 layers, 8 attention heads (configurable)
+  - **Global representation**: Extract CLS token or average pooling
+  - **Final normalization**: LayerNorm for stable outputs
+- **Key advantages**:
+  - **Learned color representations**: Network learns semantic meaning of each color (0-15)
+  - **Memory efficient**: 8× smaller input tensors vs one-hot encoding
+  - **Standard transformer approach**: Similar to word embeddings in NLP transformers
+  - **Global attention from layer 1**: Critical for non-local causality in ARC-AGI-3
+  - **Architectural consistency**: Hierarchical transformers (ViT spatial + Transformer temporal)
+  - **Learned spatial relationships**: Attention discovers which positions matter
+  - **Computational efficiency**: Only 64 patches (vs 4096 cells)
+- **Input**: `[batch, 64, 64]` integer grids with cell values 0-15
 - **Output**: `[batch, embed_dim]` state representations
+
+**Note**: Uses learned embeddings instead of one-hot encoding for better efficiency and alignment with transformer best practices.
 
 #### 2. **ActionEmbedding** (dt_agent.py:103-118)
 - **Purpose**: Embeds discrete actions into continuous space
@@ -52,14 +68,14 @@ The Decision Transformer (DT) agent is an end-to-end transformer model that dire
 
 ## Learning Flow
 
-### 1. Experience Collection (dt_agent.py:674-699)
+### 1. Experience Collection (dt_agent.py:860-886)
 
 ```
 For each game step:
 1. Execute action in environment
 2. Observe frame change (reward signal)
 3. Store experience: (state, action_idx, reward)
-   - state: [16, 64, 64] one-hot encoded grid
+   - state: [64, 64] integer grid with cell values 0-15
    - action_idx: unified index (0-4100)
    - reward: 1.0 if frame changed, 0.0 otherwise
 4. Deduplicate experiences using MD5 hash
@@ -190,27 +206,37 @@ At inference time:
 
 ## Key Features
 
-### 1. **Unified Action Space**
+### 1. **Vision Transformer State Encoding with Learned Cell Embeddings**
+- **Learned color representations**: Each cell value (0-15) learns a semantic embedding vector
+- **Memory efficient**: 8× smaller input tensors vs one-hot encoding (64×64 integers vs 16×64×64 floats)
+- **Standard transformer approach**: Cell embeddings analogous to word embeddings in NLP
+- **Hierarchical transformer architecture**: Pure transformers all the way (ViT for spatial + Transformer for temporal)
+- **Global attention**: Non-local causality handled from layer 1 (critical for ARC-AGI-3 dynamics)
+- **Learned spatial relationships**: Self-attention discovers which grid positions interact
+- **Efficient**: Only 64 patches (8×8 grid) vs 4096 cells for attention computation
+- **Flexible**: Configurable patch sizes, layers, heads, and cell embedding dimensions for different compute budgets
+
+### 2. **Unified Action Space**
 - Single model handles both discrete (ACTION1-5) and spatial (coordinates) actions
 - Dual-head architecture maintains separate reasoning paths
 - Combined sampling ensures fair probability distribution
 
-### 2. **Configurable Loss Functions**
+### 3. **Configurable Loss Functions**
 Four strategies with different exploration-exploitation trade-offs:
 - `cross_entropy`: Dense, fast convergence
 - `selective`: Sparse, conservative
 - `hybrid`: Adaptive confidence-based
 - `bandit`: Exploration-focused with entropy bonuses
 
-### 3. **Experience Deduplication**
+### 4. **Experience Deduplication**
 - MD5 hashing prevents redundant state-action pairs
 - Improves training efficiency and diversity
 
-### 4. **Level-Aware Reset**
+### 5. **Level-Aware Reset**
 - Automatically clears buffer and resets model when advancing to new level
 - Prevents negative transfer between different game stages
 
-### 5. **Integrated Visualization**
+### 6. **Integrated Visualization**
 - TensorBoard logging for training metrics
 - Action probability heatmaps for spatial reasoning
 - Optional visualization saves every N steps
