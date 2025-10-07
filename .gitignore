@@ -29,3 +29,6 @@ runs
 
 # docs
 **/docs
+
+# tests
+dt_agent/tests
