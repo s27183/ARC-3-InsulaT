@@ -11,22 +11,22 @@ from dt_agent import DTAgent, load_dt_config
 
 def run_pure_dt_agent_example():
     """Example of how to instantiate and configure a Pure DT Agent."""
-    
+
     # Example agent parameters (normally provided by ARC-AGI-3 framework)
     agent_params = {
-        'card_id': 'example_card_123',
-        'game_id': 'example_game_456', 
-        'agent_name': 'PureDTAgent_Example',
-        'ROOT_URL': 'https://arc-agi-3.com',  # Example URL
-        'record': False,  # Set to True to enable recording
-        'tags': ['pure_dt', 'transformer', 'example']
+        "card_id": "example_card_123",
+        "game_id": "example_game_456",
+        "agent_name": "PureDTAgent_Example",
+        "ROOT_URL": "https://arc-agi-3.com",  # Example URL
+        "record": False,  # Set to True to enable recording
+        "tags": ["pure_dt", "transformer", "example"],
     }
-    
+
     try:
         # Initialize the Pure DT Agent - fully self-contained
         print("🤖 Initializing Pure Decision Transformer Agent...")
         agent = DTAgent(**agent_params)
-        
+
         # The agent is now ready to use with the ARC-AGI-3 framework
         print(f"✅ Pure DT Agent initialized successfully!")
         print(f"   - Device: {agent.device}")
@@ -34,7 +34,7 @@ def run_pure_dt_agent_example():
         print(f"   - Configuration: {agent.pure_dt_config['loss_type']} loss")
         print(f"   - Context length: {agent.pure_dt_config['context_length']}")
         print(f"   - Temperature: {agent.pure_dt_config['temperature']}")
-        
+
         # Example configuration customization
         print("\n🔧 Configuration options:")
         config = load_dt_config()
@@ -43,12 +43,12 @@ def run_pure_dt_agent_example():
         print(f"   - Embed dimension: {config['embed_dim']}")
         print(f"   - Number of layers: {config['num_layers']}")
         print(f"   - Training frequency: every {config['train_frequency']} actions")
-        
+
         # The agent can now be used with agent.main() in the ARC-AGI-3 framework
         print(f"\n🚀 Agent ready! Use agent.main() to start the game loop.")
-        
+
         return agent
-        
+
     except Exception as e:
         print(f"❌ Error initializing Pure DT Agent: {e}")
         return None
@@ -61,9 +61,9 @@ def compare_configurations():
     print("-" * 50)
 
     configs = [
-        ('cross_entropy', "Dense updates on all actions"),
-        ('selective', "Sparse updates only on positive rewards"),
-        ('hybrid', "Confidence-based interpolation between dense/sparse")
+        ("cross_entropy", "Dense updates on all actions"),
+        ("selective", "Sparse updates only on positive rewards"),
+        ("hybrid", "Confidence-based interpolation between dense/sparse"),
     ]
 
     for loss_type, description in configs:
@@ -85,10 +85,18 @@ def demonstrate_vit_configuration():
     print(f"\n  Current ViT Settings:")
     print(f"    • Encoder type: {config.get('encoder_type', 'vit')}")
     print(f"    • Cell embedding dim: {config.get('vit_cell_embed_dim', 64)}")
-    print(f"      → Each color (0-15) maps to {config.get('vit_cell_embed_dim', 64)}-dim learned vector")
-    print(f"    • Patch size: {config.get('vit_patch_size', 8)}×{config.get('vit_patch_size', 8)}")
-    print(f"      → Creates {(64 // config.get('vit_patch_size', 8))**2} patches from 64×64 grid")
-    print(f"      → Each patch: {config.get('vit_patch_size', 8)**2} cells (not {16 * config.get('vit_patch_size', 8)**2} one-hot values)")
+    print(
+        f"      → Each color (0-15) maps to {config.get('vit_cell_embed_dim', 64)}-dim learned vector"
+    )
+    print(
+        f"    • Patch size: {config.get('vit_patch_size', 8)}×{config.get('vit_patch_size', 8)}"
+    )
+    print(
+        f"      → Creates {(64 // config.get('vit_patch_size', 8)) ** 2} patches from 64×64 grid"
+    )
+    print(
+        f"      → Each patch: {config.get('vit_patch_size', 8) ** 2} cells (not {16 * config.get('vit_patch_size', 8) ** 2} one-hot values)"
+    )
     print(f"    • ViT layers: {config.get('vit_num_layers', 4)}")
     print(f"    • ViT attention heads: {config.get('vit_num_heads', 8)}")
     print(f"    • Dropout: {config.get('vit_dropout', 0.1)}")
