@@ -328,10 +328,9 @@ class DecisionTransformer(nn.Module):
             batch_first=True
         )
         self.transformer = nn.TransformerDecoder(decoder_layer, num_layers)
-        
-        # Dual-head architecture like bandit model
-        # Action head for discrete actions (ACTION1-5)
-        self.action_head = nn.Sequential(
+
+        # Action head for predicting changes caused by discrete actions (ACTION1-5)
+        self.change_action_head = nn.Sequential(
             nn.LayerNorm(embed_dim),
             nn.Linear(embed_dim, embed_dim // 2),
             nn.GELU(),
@@ -339,16 +338,34 @@ class DecisionTransformer(nn.Module):
             nn.Linear(embed_dim // 2, 5)  # ACTION1-5
         )
         
-        # Coordinate head for spatial actions (64x64 coordinates)
-        self.coord_head = nn.Sequential(
+        # Coordinate head for predicting changes caused by spatial actions (64x64 coordinates)
+        self.change_coord_head = nn.Sequential(
             nn.LayerNorm(embed_dim),
             nn.Linear(embed_dim, embed_dim // 2),
             nn.GELU(),
             nn.Dropout(0.1),
             nn.Linear(embed_dim // 2, 4096)  # 64x64 coordinates
         )
+
+        # Action head for predicting level completion caused by discrete actions (ACTION1-5)
+        self.completion_action_head = nn.Sequential(
+            nn.LayerNorm(embed_dim),
+            nn.Linear(embed_dim, embed_dim // 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(embed_dim // 2, 5)
+        )
+
+        # Action head for predicting level completion caused by spatial actions (64x64 coordinates)
+        self.completion_coord_head = nn.Sequential(
+            nn.LayerNorm(embed_dim),
+            nn.Linear(embed_dim, embed_dim // 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(embed_dim // 2, 4096)
+        )
         
-    def build_state_action_sequence(self, states, actions):
+    def build_state_action_sequence(self, states, actions)-> torch.Tensor:
         """Build interleaved state-action sequence: [s₀, a₀, s₁, a₁, ..., s_{t-1}, a_{t-1}, s_t]
 
         Args:
@@ -385,7 +402,7 @@ class DecisionTransformer(nn.Module):
         
         return sequence
         
-    def forward(self, states, actions):
+    def forward(self, states, actions) -> dict[str, torch.Tensor]:
         """
         Args:
             states: [batch, seq_len+1, 64, 64] - k+1 integer grids with cell values 0-15 (past + current)
@@ -412,14 +429,21 @@ class DecisionTransformer(nn.Module):
         # Extract final representation (current state)
         final_repr = transformer_output[:, -1]  # [batch, embed_dim]
         
-        # Dual-head prediction
-        action_logits = self.action_head(final_repr)  # [batch, 5] - ACTION1-5
-        coord_logits = self.coord_head(final_repr)    # [batch, 4096] - coordinates
-        
+        # Multi-head prediction
+        change_action_logits = self.change_action_head(final_repr)  # [batch, 5] - ACTION1-5
+        completion_action_logits = self.completion_action_head(final_repr) # [batch, 5] - ACTION1-5
+        change_coord_logits = self.change_coord_head(final_repr)    # [batch, 4096] - coordinates
+        completion_coord_logits = self.completion_coord_head(final_repr) # [batch, 4096] - coordinates
+
+
         # Concatenate for compatibility with existing interface
-        combined_logits = torch.cat([action_logits, coord_logits], dim=1)  # [batch, 4101]
+        changed_logits = torch.cat([change_action_logits, change_coord_logits], dim=1)  # [batch, 4101]
+        completion_logits = torch.cat([completion_action_logits, completion_coord_logits], dim=1)   # [batch, 4101]
         
-        return combined_logits
+        return {
+                "changed_logits": changed_logits,
+                "completion_logits": completion_logits
+        }
 
 
 
@@ -572,23 +596,22 @@ class DTAgent(Agent):
         states_batch = torch.stack([seq['states'] for seq in sequences]).to(self.device)
         actions_batch = torch.stack([seq['actions'] for seq in sequences]).to(self.device)
         targets_batch = torch.stack([seq['targets'] for seq in sequences]).to(self.device)
-        rewards_batch = torch.stack([seq['rewards'] for seq in sequences]).to(self.device)
+        change_rewards_batch = torch.stack([seq['change_rewards'] for seq in sequences]).to(self.device)
+        completion_rewards_batch = torch.stack([seq['completion_rewards'] for seq in sequences]).to(self.device)
         
         # Log training start info
         num_sequences = len(sequences)
-        num_positive_rewards = (rewards_batch > 0).sum().item()
-        loss_type = self.pure_dt_config['loss_type']
-        self.logger.info(f"🎯 Starting DT training: {num_sequences} sequences, {num_positive_rewards} positive rewards, loss_type={loss_type}")
+        self.logger.info(f"🎯 Starting DT training: {num_sequences} sequences")
         
         # Training loop with configurable epochs
         for epoch in range(self.pure_dt_config['epochs_per_training']):
             self.optimizer.zero_grad()
             
             # Forward pass
-            action_logits = self.pure_dt_model(states_batch, actions_batch)  # [batch, 4101]
+            logits = self.pure_dt_model(states_batch, actions_batch)  # [batch, 4101]
             
             # Compute configurable loss
-            loss, metrics = self._compute_pure_dt_loss(action_logits, targets_batch, rewards_batch)
+            loss, metrics = self._compute_pure_dt_loss(action_logits, None, targets_batch, change_rewards_batch, None)
             
             # Gradient clipping and backward pass
             loss.backward()
@@ -645,38 +668,45 @@ class DTAgent(Agent):
             
             # Target action and reward (what we want to predict)
             target_action = sequence_experiences[-1]['action_idx']
-            target_reward = sequence_experiences[-1]['reward']
+            change_target_reward = sequence_experiences[-1]['change_reward']
+            completion_target_reward = sequence_experiences[-1]['completion_reward']
             
             sequences.append({
                 'states': states,
                 'actions': actions,
                 'targets': torch.tensor(target_action, dtype=torch.long),
-                'rewards': torch.tensor(target_reward, dtype=torch.float32)
+                'change_rewards': torch.tensor(change_target_reward, dtype=torch.float32),
+                'completion_rewards': torch.tensor(completion_target_reward, dtype=torch.float32)
             })
         
         return sequences
     
-    def _compute_pure_dt_loss(self, action_logits, targets, rewards):
+    def _compute_pure_dt_loss(self,
+                              change_action_logits: torch.Tensor,
+                              completion_action_logits: torch.Tensor,
+                              targets: torch.Tensor,
+                              change_rewards: torch.Tensor,
+                              completion_rewards: torch.Tensor):
         """Compute configurable loss for DT training."""
         loss_type = self.pure_dt_config['loss_type']
         
         if loss_type == 'cross_entropy':
             # Standard cross-entropy loss (dense updates)
-            loss = F.cross_entropy(action_logits, targets)
-            metrics = {'accuracy': (action_logits.argmax(dim=1) == targets).float().mean()}
+            loss = F.cross_entropy(change_action_logits, targets)
+            metrics = {'accuracy': (change_action_logits.argmax(dim=1) == targets).float().mean()}
             
         elif loss_type == 'bandit':
             # Bandit-style: Binary cross-entropy on selected action logits only
             # This matches the original bandit optimization process exactly
             
             # Gather only the logits for selected actions
-            selected_logits = action_logits.gather(1, targets.unsqueeze(1)).squeeze(1)
+            selected_logits = change_action_logits.gather(1, targets.unsqueeze(1)).squeeze(1)
             
             # Binary cross-entropy with rewards as binary labels
-            main_loss = F.binary_cross_entropy_with_logits(selected_logits, rewards)
+            main_loss = F.binary_cross_entropy_with_logits(selected_logits, change_rewards)
             
             # Add entropy regularization like bandit (encourage exploration)
-            all_probs = torch.sigmoid(action_logits)
+            all_probs = torch.sigmoid(change_action_logits)
             
             # Split into action and coordinate spaces for separate entropy
             action_probs = all_probs[:, :5]
@@ -696,7 +726,7 @@ class DTAgent(Agent):
             # Calculate accuracy: did we correctly predict whether action causes frame change?
             # This matches what the loss is optimizing for (bandit-style frame change prediction)
             accuracy = (
-                ((torch.sigmoid(selected_logits) > 0.5) == rewards).float().mean()
+                ((torch.sigmoid(selected_logits) > 0.5) == change_rewards).float().mean()
             )
 
             metrics = {
@@ -709,15 +739,15 @@ class DTAgent(Agent):
             
         elif loss_type == 'selective':
             # Selective loss - only update on positive rewards (sparse updates)
-            positive_mask = rewards > 0
+            positive_mask = change_rewards > 0
             if positive_mask.sum() > 0:
-                loss = F.cross_entropy(action_logits[positive_mask], targets[positive_mask])
+                loss = F.cross_entropy(change_action_logits[positive_mask], targets[positive_mask])
                 metrics = {
-                    'accuracy': ((action_logits.argmax(dim=1)>0.5) == targets).float().mean(),
+                    'accuracy': ((change_action_logits.argmax(dim=1) > 0.5) == targets).float().mean(),
                     'positive_samples': positive_mask.sum().float()
                 }
             else:
-                loss = torch.tensor(0.0, device=action_logits.device, requires_grad=True)
+                loss = torch.tensor(0.0, device=change_action_logits.device, requires_grad=True)
                 metrics = {'accuracy': 0.0, 'positive_samples': 0.0}
 
         
@@ -758,14 +788,26 @@ class DTAgent(Agent):
             self._has_time_elapsed(),
         ])
     
-    def choose_action(self, frames: list[FrameData], latest_frame_data: FrameData) -> GameAction:
-        """Choose action using Decision Transformer predictions."""
+    def choose_action(self, frames: list[FrameData], latest_frame: FrameData) -> GameAction:
+        """
+        Choose action using Decision Transformer predictions.
+
+        Args:
+            frames: List of previous frames
+            latest_frame: Latest frame data
+
+        Returns:
+            action: The action to take
+        """
+
+        # Convert current frame to torch tensor
+        current_frame = self._frame_to_tensor(latest_frame)
+
+        # Store unique experience
+        self._store_experience(current_frame, current_score=latest_frame.score)
 
         # Reset the game when certain conditions are met
-        self._reset_if_required(latest_frame_data=latest_frame_data)
-
-        # Convert current frame to tensor
-        current_frame = self._frame_to_tensor(latest_frame_data)
+        self._reset_if_required(latest_frame=latest_frame)
         
         # If frame processing failed, reset tracking and return random action
         if current_frame is None:
@@ -776,13 +818,10 @@ class DTAgent(Agent):
             action.reasoning = f"Skipped error frame, use a random action - {action.value}"
             return action
         
-        # Store unique experience
-        self._store_experience(current_frame)
-        
         # Get action predictions from DT model (following bandit pattern exactly)
         action_idx, coord_idx, selected_action = self.select_action(
                 latest_frame_torch=current_frame,
-                latest_frame_data= latest_frame_data
+                latest_frame= latest_frame
         )
         
         # Store current frame and action for next experience creation
@@ -808,14 +847,14 @@ class DTAgent(Agent):
 
         return selected_action
 
-    def _reset_if_required(self, latest_frame_data: FrameData) -> None | GameAction:
+    def _reset_if_required(self, latest_frame: FrameData) -> None | GameAction:
         # Check if score has changed and log score at action count
 
-        if latest_frame_data.score != self.current_score or self.current_score == 0:
+        if latest_frame.score != self.current_score or self.current_score == 0:
             self.logger.info(
-                f"Score changed from {self.current_score} to {latest_frame_data.score} at action {self.action_counter}"
+                f"Score changed from {self.current_score} to {latest_frame.score} at action {self.action_counter}"
             )
-            print(f"Score changed from {self.current_score} to {latest_frame_data.score} at action {self.action_counter}")
+            print(f"Score changed from {self.current_score} to {latest_frame.score} at action {self.action_counter}")
 
             # Clear experience buffer when reaching new level
             self.experience_buffer.clear()
@@ -850,9 +889,9 @@ class DTAgent(Agent):
             # Reset previous tracking
             self.prev_frame = None
             self.prev_action_idx = None
-            self.current_score = latest_frame_data.score
+            self.current_score = latest_frame.score
 
-        if latest_frame_data.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
+        if latest_frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
             # Reset previous tracking on game reset
             self.prev_frame = None
             self.prev_action_idx = None
@@ -860,7 +899,7 @@ class DTAgent(Agent):
             action.reasoning = "Game needs reset."
             return action
 
-    def _store_experience(self, latest_frame: torch.Tensor):
+    def _store_experience(self, current_frame: torch.Tensor, current_score:int):
         if self.prev_frame is not None:
             # Compute hash for uniqueness check
             experience_hash = self._compute_experience_hash(self.prev_frame, self.prev_action_idx)
@@ -868,34 +907,35 @@ class DTAgent(Agent):
             # Only store if unique
             if experience_hash not in self.experience_hashes:
                 # Convert current frame to numpy int64 for comparison
-                latest_frame_np = latest_frame.cpu().numpy().astype(np.int64)
+                latest_frame_np = current_frame.cpu().numpy().astype(np.int64)
                 frame_changed = not np.array_equal(self.prev_frame, latest_frame_np)
+                level_completion = current_score != self.current_score
 
                 experience = {
                     "state": self.prev_frame,  # Integer grid [64, 64]
                     "action_idx": self.prev_action_idx,  # Unified action index
-                    "reward": 1.0 if frame_changed else 0.0,
+                    "change_reward": 1.0 if frame_changed else 0.0,
+                    "completion_reward": 1.0 if level_completion else 0.0,
                 }
                 self.experience_buffer.append(experience)
                 self.experience_hashes.add(experience_hash)
 
                 # Log replay buffer size periodically
-                if self.save_action_visualizations:
-                    self.writer.add_scalar(
-                        "Agent/replay_buffer_size", len(self.experience_buffer), self.action_counter
-                    )
-                    self.writer.add_scalar(
-                        "Agent/replay_unique_hashes", len(self.experience_hashes), self.action_counter
-                    )
+                self.writer.add_scalar(
+                    "DTAgent/replay_buffer_size", len(self.experience_buffer), self.action_counter
+                )
+                self.writer.add_scalar(
+                    "DTAgent/replay_unique_hashes", len(self.experience_hashes), self.action_counter
+                )
 
-    def select_action(self, latest_frame_torch: torch.Tensor, latest_frame_data: FrameData) -> tuple[int, int, GameAction]:
+    def select_action(self, latest_frame_torch: torch.Tensor, latest_frame: FrameData) -> tuple[int, int, GameAction]:
         with torch.no_grad():
             # Build state-action sequence and get logits
             context_length = self.pure_dt_config['context_length']
 
             # Cold start - random valid action if no experience
             if len(self.experience_buffer) < 1:
-                selected_action = self._random_valid_action(latest_frame_data.available_actions)
+                selected_action = self._random_valid_action(latest_frame.available_actions)
                 # Set default values for tracking
                 if selected_action.value <= 5:
                     action_idx = selected_action.value - 1
@@ -912,18 +952,14 @@ class DTAgent(Agent):
                 )
 
                 # Get action logits from DT
-                combined_logits = self.pure_dt_model(states, actions)  # [1, 4101]
-                combined_logits = combined_logits.squeeze(0)  # (4101,)
+                change_combined_logits = self.pure_dt_model(states, actions)  # [1, 4101]
+                change_combined_logits = change_combined_logits.squeeze(0)  # (4101,)
 
                 # Sample from combined action space (following bandit pattern exactly)
-                action_idx, coords, coord_idx, all_probs = (
-                    self._sample_from_combined_output(
-                        combined_logits, latest_frame_data.available_actions
-                    )
+                action_idx, coords, coord_idx = (
+                        self._sample_from_combined_output(change_combined_logits, None,
+                                                          latest_frame.available_actions)
                 )
-
-                # Store probabilities for visualization
-                self._last_all_probs = all_probs
 
                 # Create GameAction directly (following bandit pattern exactly)
                 if action_idx < 5:
@@ -940,21 +976,29 @@ class DTAgent(Agent):
 
         return action_idx, coord_idx, selected_action
 
-    def _sample_from_combined_output(
-        self, combined_logits: torch.Tensor, available_actions=None
-    ) -> tuple[int, tuple, int, np.ndarray]:
+    def _sample_from_combined_output(self, change_logits: torch.Tensor, completion_logits: torch.Tensor, available_actions=None) -> tuple[int, tuple | None, int | None] :
         """Sample from combined 5 + 64x64 action space with masking for invalid actions.
         
-        Copied exactly from bandit model to ensure identical behavior.
+        Args:
+            change_logits (torch.Tensor): logits for predicting changes caused by both discrete and coordinate actions
+            completion_logits (torch.Tensor): logits for predicting level completion caused by both discrete and coordinate actions
+            available_actions (list, optional): list of available actions, default to None
+
+        Returns:
+            action_idx (int): index of selected action
+            coord_idx (tuple): index of selected coordinate
+            selected_action (GameAction): selected action
         """
         # Split logits
-        action_logits = combined_logits[:5]  # First 5
-        coord_logits = combined_logits[5:]  # Remaining 4096
+        change_action_logits = change_logits[:5]  # First 5
+        completion_action_logits = completion_logits[5:]
+        change_coord_logits = change_logits[5:]  # Remaining 4096
+        completion_coord_logits = completion_logits[:5]
 
         # Apply masking based on available_actions if provided
         if available_actions is not None and len(available_actions) > 0:
             # Create mask for action logits (ACTION1-ACTION5 = indices 0-4)
-            action_mask = torch.full_like(action_logits, float("-inf"))
+            action_mask = torch.full_like(change_action_logits, float("-inf"))
             action6_available = False
 
             for action in available_actions:
@@ -967,44 +1011,46 @@ class DTAgent(Agent):
                     action6_available = True
 
             # Apply mask to action logits
-            action_logits = action_logits + action_mask
+            change_action_logits = change_action_logits + action_mask
+            completion_action_logits = completion_action_logits + action_mask
 
             # If ACTION6 (coordinate action) is not available, mask all coordinate logits
             if not action6_available:
-                coord_mask = torch.full_like(coord_logits, float("-inf"))
-                coord_logits = coord_logits + coord_mask
+                coord_mask = torch.full_like(change_coord_logits, float("-inf"))
+                change_coord_logits = change_coord_logits + coord_mask
+                completion_coord_logits = completion_coord_logits + coord_mask
 
         # Apply sigmoid
-        action_probs = torch.sigmoid(action_logits)
-        coord_probs_raw = torch.sigmoid(coord_logits)
+        change_action_probs = torch.sigmoid(change_action_logits)
+        completion_action_probs = torch.sigmoid(completion_action_logits)
+        change_coord_probs = torch.sigmoid(change_coord_logits)
+        completion_coord_probs = torch.sigmoid(completion_coord_logits)
 
         # For fair sampling: treat coordinates as one action type with total prob divided by 4096
-        coord_probs_scaled = coord_probs_raw / self.num_coordinates
+        change_coord_probs_scaled = change_coord_probs / self.num_coordinates
+        completion_coord_probs_scaled = completion_coord_probs / self.num_coordinates
 
         # Combine for sampling (normalize)
-        all_probs_sampling = torch.cat([action_probs, coord_probs_scaled])
-        all_probs_sampling = all_probs_sampling / all_probs_sampling.sum()
-        all_probs_sampling_np = all_probs_sampling.cpu().numpy()
+        change_probs_sampling = torch.cat([change_action_probs, change_coord_probs_scaled])
+        change_probs_sampling = change_probs_sampling / change_probs_sampling.sum()
+        completion_probs_sampling = torch.cat([completion_action_probs, completion_coord_probs_scaled])
+        completion_probs_sampling = completion_probs_sampling / completion_probs_sampling.sum()
+        probs_sampling = change_probs_sampling*completion_probs_sampling
 
         # Sample from normalized space
         selected_idx = np.random.choice(
-            len(all_probs_sampling_np), p=all_probs_sampling_np
+            len(probs_sampling), p=probs_sampling.cpu().numpy()
         )
-
-        # Return unnormalized sigmoid values for visualization
-        coord_probs_viz = torch.sigmoid(coord_logits)  # Raw sigmoid for visualization
-        all_probs_viz = torch.cat([action_probs, coord_probs_viz])
-        all_probs_viz_np = all_probs_viz.cpu().numpy()
 
         if selected_idx < 5:
             # Selected one of ACTION1-ACTION5
-            return selected_idx, None, None, all_probs_viz_np
+            return selected_idx, None, None
         else:
             # Selected a coordinate (index 5-4100)
             coord_idx = selected_idx - 5
             y_idx = coord_idx // self.grid_size
             x_idx = coord_idx % self.grid_size
-            return 5, (y_idx, x_idx), coord_idx, all_probs_viz_np
+            return 5, (y_idx, x_idx), coord_idx
     
     def _random_valid_action(self, available_actions):
         """Generate random valid action for cold start or error fallback."""
