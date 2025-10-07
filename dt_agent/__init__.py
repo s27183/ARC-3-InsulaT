@@ -13,20 +13,20 @@ from .config import (
     DEFAULT_DT_CONFIG,
     CROSS_ENTROPY_CONFIG,
     SELECTIVE_CONFIG,
-    HYBRID_CONFIG
+    HYBRID_CONFIG,
 )
 
 from .dt_agent import DTAgent
 
 __all__ = [
     # Configuration
-        'load_dt_config',
-    'get_loss_config_summary', 
-    'validate_config',
-        'DEFAULT_DT_CONFIG',
-    'CROSS_ENTROPY_CONFIG',
-    'SELECTIVE_CONFIG', 
-    'HYBRID_CONFIG',
+    "load_dt_config",
+    "get_loss_config_summary",
+    "validate_config",
+    "DEFAULT_DT_CONFIG",
+    "CROSS_ENTROPY_CONFIG",
+    "SELECTIVE_CONFIG",
+    "HYBRID_CONFIG",
     # Model,
-        "DTAgent"
+    "DTAgent",
 ]
