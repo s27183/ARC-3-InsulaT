@@ -776,10 +776,10 @@ class DTAgent(Agent):
 
         # Calculate diversity bonus (mean probability) separately for each head
         # Higher mean = model considers more actions viable = more diversity
-        change_action_diversity = change_action_probs.mean()
-        change_coord_diversity = change_coord_probs.mean()
-        completion_action_diversity = completion_action_probs.mean()
-        completion_coord_diversity = completion_coord_probs.mean()
+        change_action_diversity = change_action_probs.mean(dim=1).mean(dim=0)
+        change_coord_diversity = change_coord_probs.mean(dim=1).mean(dim=0)
+        completion_action_diversity = completion_action_probs.mean(dim=1).mean(dim=0)
+        completion_coord_diversity = completion_coord_probs.mean(dim=1).mean(dim=0)
 
         # Average diversity across both heads
         action_diversity = (change_action_diversity + completion_action_diversity) / 2
