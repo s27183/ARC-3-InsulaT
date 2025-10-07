@@ -248,65 +248,52 @@ class DTAgent(Agent):
         # Setup experiment directory and logging
         self.base_dir, log_file = setup_experiment_directory()
         setup_logging(log_file)
-        
-        # Get environment-specific directory
+        self.logger = logging.getLogger(f"DTAgent_{self.game_id}")
+
         env_dir = get_environment_directory(self.base_dir, self.game_id)
         tensorboard_dir = os.path.join(env_dir, "tensorboard")
         os.makedirs(tensorboard_dir, exist_ok=True)
-        
         self.writer = SummaryWriter(tensorboard_dir)
-        self.current_score = -1
+
         
-        # Setup logger
-        self.logger = logging.getLogger(f"DTAgent_{self.game_id}")
-        
-        # Configuration for visualization and logging
-        self.save_action_visualizations = False  # Set to True to enable image generation
-        self.vis_save_frequency = 100  # Save images every N steps
-        self.vis_samples_per_save = 1  # Number of visualization samples to save each time
-        self.log_dir = env_dir
-        
-        # Grid and action space configuration
-        self.grid_size = 64
-        self.num_coordinates = self.grid_size * self.grid_size
-        self.num_colours = 16
-        
-        # Load DT configuration
+        # Model initialization
         self.pure_dt_config = load_dt_config(device=str(self.device))
         validate_config(self.pure_dt_config)
-        
-        # Log configuration
+
         config_summary = get_loss_config_summary(self.pure_dt_config)
         self.logger.info(f"DT initialized: {config_summary}")
         print(f"DT initialized: {config_summary}")
-        
-        # Initialize DT model
+
         self.pure_dt_model = DecisionTransformer(
             embed_dim=self.pure_dt_config['embed_dim'],
             num_layers=self.pure_dt_config['num_layers'],
             num_heads=self.pure_dt_config['num_heads'],
             max_context_len=self.pure_dt_config['max_context_len']
         ).to(self.device)
-        
-        # Initialize optimizer
+
         self.optimizer = torch.optim.Adam(
             self.pure_dt_model.parameters(),
             lr=self.pure_dt_config['learning_rate'],
             weight_decay=self.pure_dt_config['weight_decay']
         )
-        
-        # Action sampling now done directly in choose_action() like bandit
-        
+
+        # Grid info
+        self.grid_size = 64
+        self.num_coordinates = self.grid_size * self.grid_size
+        self.num_colours = 16
+
+        # Scores as level indicators
+        self.current_score = 0
+
         # Experience buffer for training with uniqueness tracking
         self.experience_buffer = deque(maxlen=self.pure_dt_config['max_buffer_size'])
         self.experience_hashes = set()
         self.train_frequency = self.pure_dt_config['train_frequency']
         
-        # Track previous state/action for experience creation
+        # Game state and action mapping
         self.prev_frame = None
         self.prev_action_idx = None
-        
-        # Action mapping: ACTION1-ACTION5
+
         self.action_list = [
             GameAction.ACTION1,
             GameAction.ACTION2, 
@@ -317,10 +304,7 @@ class DTAgent(Agent):
         
         print(f"DT Agent logging to: {tensorboard_dir}")
         self.logger.info(f"DT Agent initialized for game_id: {self.game_id}")
-        if self.save_action_visualizations:
-            self.logger.info(
-                f"Action visualizations enabled: saving {self.vis_samples_per_save} samples every {self.vis_save_frequency} steps"
-            )
+
     
     def _frame_to_tensor(self, frame_data: FrameData) -> torch.Tensor:
         """Convert frame data to tensor format for the model."""
@@ -611,10 +595,7 @@ class DTAgent(Agent):
     def _reset_if_required(self, latest_frame_data: FrameData) -> None | GameAction:
         # Check if score has changed and log score at action count
 
-        if latest_frame_data.score != self.current_score:
-            if self.save_action_visualizations:
-                self.writer.add_scalar("Agent/score", latest_frame_data.score, self.action_counter)
-
+        if latest_frame_data.score != self.current_score or self.current_score == 0:
             self.logger.info(
                 f"Score changed from {self.current_score} to {latest_frame_data.score} at action {self.action_counter}"
             )
