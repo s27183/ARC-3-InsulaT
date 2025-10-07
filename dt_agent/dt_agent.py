@@ -639,7 +639,7 @@ class DTAgent(Agent):
             logits = self.pure_dt_model(states_batch, actions_batch)  # [batch, 4101]
 
             # Compute configurable loss
-            loss, metrics = self._compute_pure_dt_loss(
+            loss, metrics = self._compute_loss(
                 change_logits=logits["change_logits"],
                 completion_logits=logits["completion_logits"],
                 target_actions=target_actions_batch,
@@ -725,7 +725,7 @@ class DTAgent(Agent):
 
         return sequences
 
-    def _compute_pure_dt_loss(
+    def _compute_loss(
         self,
         change_logits: torch.Tensor,
         completion_logits: torch.Tensor,
@@ -763,26 +763,38 @@ class DTAgent(Agent):
                 selected_completion_logits, completion_rewards
         )
 
-        # Add entropy regularization like bandit (encourage exploration)
+        # Add action diversity regularization (encourage exploring more actions)
+        # Compute probabilities separately for each head
         change_probs = torch.sigmoid(change_logits)
         completion_probs = torch.sigmoid(completion_logits)
-        combined_probs = change_probs*completion_probs
 
-        # Split into action and coordinate spaces for separate entropy
-        action_probs = combined_probs[:, :5]
-        coord_probs = combined_probs[:, 5:]
+        # Split into action and coordinate spaces for each head
+        change_action_probs = change_probs[:, :5]      # [batch, 5]
+        change_coord_probs = change_probs[:, 5:]       # [batch, 4096]
+        completion_action_probs = completion_probs[:, :5]    # [batch, 5]
+        completion_coord_probs = completion_probs[:, 5:]     # [batch, 4096]
 
-        # Calculate entropy bonus (mean sigmoid activation)
-        action_entropy = action_probs.mean()
-        coord_entropy = coord_probs.mean()
+        # Calculate diversity bonus (mean probability) separately for each head
+        # Higher mean = model considers more actions viable = more diversity
+        change_action_diversity = change_action_probs.mean()
+        change_coord_diversity = change_coord_probs.mean()
+        completion_action_diversity = completion_action_probs.mean()
+        completion_coord_diversity = completion_coord_probs.mean()
 
-        # Dynamic entropy coefficients (can be made configurable)
+        # Average diversity across both heads
+        action_diversity = (change_action_diversity + completion_action_diversity) / 2
+        coord_diversity = (change_coord_diversity + completion_coord_diversity) / 2
+
+        # Diversity coefficients (configurable)
         action_coeff = self.pure_dt_config.get("action_entropy_coeff", 0.0001)
         coord_coeff = self.pure_dt_config.get("coord_entropy_coeff", 0.00001)
 
-        # Total loss with entropy regularization
+        # Total loss with diversity regularization
+        # Subtracting encourages higher mean probability = more action diversity
         loss = (
-            change_loss + completion_loss - action_coeff * action_entropy - coord_coeff * coord_entropy
+            change_loss + completion_loss
+            - action_coeff * action_diversity
+            - coord_coeff * coord_diversity
         )
 
         # Calculate accuracy: did we correctly predict whether action causes frame change?
@@ -792,12 +804,12 @@ class DTAgent(Agent):
         accuracy = (change_accuracy & completion_accuracy).float().mean()
 
 
-
         metrics = {
             "accuracy": accuracy.item(),
-            "main_loss": change_loss.item(),
-            "action_entropy": action_entropy.item(),
-            "coord_entropy": coord_entropy.item(),
+            "change_loss": change_loss.item(),
+            "completion_loss": completion_loss.item(),
+            "action_diversity": action_diversity.item(),
+            "coord_diversity": coord_diversity.item(),
             "total_loss": loss.item(),
         }
 
@@ -812,15 +824,19 @@ class DTAgent(Agent):
         self.writer.add_scalar("DTAgent/accuracy", metrics.get("accuracy", 0), step)
 
         # Log bandit-specific metrics if available
-        if "main_loss" in metrics:
-            self.writer.add_scalar("DTAgent/main_loss", metrics["main_loss"], step)
-        if "action_entropy" in metrics:
+        if "change_loss" in metrics:
+            self.writer.add_scalar("DTAgent/change_loss", metrics["change_loss"], step)
+        if "completion_loss" in metrics:
             self.writer.add_scalar(
-                "DTAgent/action_entropy", metrics["action_entropy"], step
+                "DTAgent/completion_loss", metrics["completion_loss"], step
             )
-        if "coord_entropy" in metrics:
+        if "action_diversity" in metrics:
             self.writer.add_scalar(
-                "DTAgent/coord_entropy", metrics["coord_entropy"], step
+                "DTAgent/action_diversity", metrics["action_diversity"], step
+            )
+        if "coord_diversity" in metrics:
+            self.writer.add_scalar(
+                "DTAgent/coord_diversity", metrics["coord_diversity"], step
             )
 
         # Loss-type specific metrics
@@ -1034,14 +1050,15 @@ class DTAgent(Agent):
                 )
 
                 # Get action logits from DT
-                change_combined_logits = self.pure_dt_model(
+                logits = self.pure_dt_model(
                     states, actions
                 )  # [1, 4101]
-                change_combined_logits = change_combined_logits.squeeze(0)  # (4101,)
+                change_logits = logits["change_logits"].squeeze(0)  # (4101,)
+                completion_logits = logits["completion_logits"].squeeze(0)
 
                 # Sample from combined action space (following bandit pattern exactly)
                 action_idx, coords, coord_idx = self._sample_from_combined_output(
-                    change_combined_logits, None, latest_frame.available_actions
+                    change_logits, completion_logits, latest_frame.available_actions
                 )
 
                 # Create GameAction directly (following bandit pattern exactly)
@@ -1081,9 +1098,9 @@ class DTAgent(Agent):
         """
         # Split logits
         change_action_logits = change_logits[:5]  # First 5
-        completion_action_logits = completion_logits[5:]
         change_coord_logits = change_logits[5:]  # Remaining 4096
-        completion_coord_logits = completion_logits[:5]
+        completion_action_logits = completion_logits[:5] # First 5
+        completion_coord_logits = completion_logits[5:] # Remaining 4096
 
         # Apply masking based on available_actions if provided
         if available_actions is not None and len(available_actions) > 0:
