@@ -53,11 +53,20 @@ DEFAULT_DT_CONFIG = {
     'gradient_clip_norm': 1.0,  # Gradient clipping norm
     'early_stopping_patience': None,  # Optional early stopping (None = disabled)
     
-    # Logging and Visualization  
+    # Logging and Visualization
     'log_training_metrics': True,     # Log training metrics to tensorboard
     'log_action_distributions': True, # Log action probability distributions
     'save_model_checkpoints': False,  # Save model checkpoints during training
     'checkpoint_frequency': 1000,     # Save checkpoint every N training steps
+
+    # ViT State Encoder Configuration
+    'encoder_type': 'vit',            # Options: 'cnn', 'vit'
+    'vit_patch_size': 8,              # Patch size (8×8 = 64 patches for 64×64 grid)
+    'vit_num_layers': 4,              # ViT transformer layers
+    'vit_num_heads': 8,               # ViT attention heads
+    'vit_dropout': 0.1,               # ViT dropout rate
+    'vit_use_cls_token': True,        # Use CLS token (True) vs global pooling (False)
+    'vit_cell_embed_dim': 64,         # Dimension for learned cell embeddings (0-15)
 }
 
 # Device-specific configurations
@@ -67,6 +76,11 @@ CPU_PURE_DT_CONFIG = {
     'num_layers': 2,            # Fewer layers for CPU
     'context_length': 10,       # Shorter context for CPU
     'max_training_experiences': 30,
+    # ViT configuration for CPU
+    'vit_num_layers': 2,        # Fewer ViT layers for CPU
+    'vit_num_heads': 4,         # Fewer attention heads for CPU (128/4 = 32)
+    'vit_patch_size': 8,        # Keep patch size same
+    'vit_cell_embed_dim': 32,   # Smaller cell embeddings for CPU
 }
 
 GPU_PURE_DT_CONFIG = {
@@ -75,6 +89,11 @@ GPU_PURE_DT_CONFIG = {
     'num_layers': 6,            # More layers for GPU
     'context_length': 20,       # Longer context for GPU
     'max_training_experiences': 100,
+    # ViT configuration for GPU
+    'vit_num_layers': 6,        # More ViT layers for GPU
+    'vit_num_heads': 16,        # More attention heads for GPU (512/16 = 32)
+    'vit_patch_size': 8,        # Keep patch size same
+    'vit_cell_embed_dim': 128,  # Larger cell embeddings for GPU
 }
 
 # Loss function specific configurations
