@@ -39,27 +39,47 @@ from dt_agent.utils import setup_experiment_directory, setup_logging, get_enviro
 from dt_agent.config import load_dt_config, get_loss_config_summary, validate_config
 
 
+# ============================================================================
+# DEPRECATED: CNN StateEncoder (replaced by ViTStateEncoder)
+# ============================================================================
+# This CNN-based StateEncoder has been replaced by ViTStateEncoder for better
+# handling of non-local causality in ARC-AGI-3. The Vision Transformer provides
+# global attention from layer 1, which is critical for dynamic grid games.
+#
+# Keeping this class for reference and potential future comparisons.
+# ============================================================================
+
 class StateEncoder(nn.Module):
-    """CNN State Encoder - reuses proven bandit architecture for spatial reasoning."""
-    
+    """
+    [DEPRECATED] CNN State Encoder - replaced by ViTStateEncoder.
+
+    This CNN-based encoder uses 4 convolutional layers for spatial reasoning.
+    It has been replaced by ViTStateEncoder which provides:
+    - Global attention from layer 1 (better for non-local causality)
+    - Hierarchical transformer architecture (ViT spatial + Transformer temporal)
+    - Learned spatial relationships via self-attention
+
+    Kept for reference and potential CNN vs ViT comparisons.
+    """
+
     def __init__(self, input_channels=16, embed_dim=256, freeze_weights=False):
         super().__init__()
-        
+
         # Shared convolutional backbone (from bandit ActionModel)
         self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
         self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
         self.conv4 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
-        
+
         # Spatial pooling and projection to transformer dimension
         self.spatial_pool = nn.AdaptiveAvgPool2d(1)  # 256×64×64 → 256×1×1
         self.state_projection = nn.Linear(256, embed_dim)
-        
+
         if freeze_weights:
             # Option: freeze pre-trained bandit weights for transfer learning
             for param in self.parameters():
                 param.requires_grad = False
-    
+
     def forward(self, grid_states):
         """
         Args:
@@ -69,14 +89,180 @@ class StateEncoder(nn.Module):
         """
         # Shared convolutional backbone
         x = F.relu(self.conv1(grid_states))  # [batch, 32, 64, 64]
-        x = F.relu(self.conv2(x))            # [batch, 64, 64, 64]  
+        x = F.relu(self.conv2(x))            # [batch, 64, 64, 64]
         x = F.relu(self.conv3(x))            # [batch, 128, 64, 64]
         x = F.relu(self.conv4(x))            # [batch, 256, 64, 64]
-        
+
         # Global spatial representation
         x = self.spatial_pool(x).flatten(1)  # [batch, 256]
         state_repr = self.state_projection(x)  # [batch, embed_dim]
-        
+
+        return state_repr
+
+# ============================================================================
+# End of deprecated CNN StateEncoder
+# ============================================================================
+
+
+class ViTStateEncoder(nn.Module):
+    """Vision Transformer State Encoder with Learned Cell Embeddings.
+
+    Encodes 64×64 grids into vector representations using patch-based
+    self-attention with learned embeddings for each cell value (0-15).
+
+    This approach is more efficient than one-hot encoding:
+    - 16x fewer values per patch (64 cells vs 1024 one-hot values)
+    - Learned color representations (like word embeddings in NLP)
+    - Standard transformer architecture philosophy
+
+    Args:
+        num_colors: Number of possible cell values (default: 16 for colors 0-15)
+        embed_dim: Transformer embedding dimension
+        cell_embed_dim: Dimension for each cell embedding (0-15)
+        patch_size: Size of each square patch (default: 8 for 8×8 patches)
+        num_layers: Number of transformer encoder layers
+        num_heads: Number of attention heads
+        dropout: Dropout rate
+        use_cls_token: Whether to use CLS token (True) or global pooling (False)
+    """
+
+    def __init__(
+        self,
+        num_colors: int = 16,
+        embed_dim: int = 256,
+        cell_embed_dim: int = 64,
+        patch_size: int = 8,
+        num_layers: int = 4,
+        num_heads: int = 8,
+        dropout: float = 0.1,
+        use_cls_token: bool = True
+    ):
+        super().__init__()
+
+        self.num_colors = num_colors
+        self.cell_embed_dim = cell_embed_dim
+        self.patch_size = patch_size
+        self.grid_size = 64
+        self.num_patches = (self.grid_size // patch_size) ** 2  # 64 patches for 8×8
+        self.use_cls_token = use_cls_token
+
+        # Learned cell embedding: each color (0-15) → vector
+        self.cell_embedding = nn.Embedding(num_colors, cell_embed_dim)
+
+        # Patch projection: aggregated cell embeddings → transformer dimension
+        self.patch_projection = nn.Linear(cell_embed_dim, embed_dim)
+
+        # 2D learnable positional embeddings for patch grid
+        num_patches_per_dim = self.grid_size // patch_size  # 8
+        self.pos_embed = nn.Parameter(
+            torch.randn(1, num_patches_per_dim, num_patches_per_dim, embed_dim) * 0.02
+        )
+
+        # CLS token for global representation
+        if use_cls_token:
+            self.cls_token = nn.Parameter(torch.randn(1, 1, embed_dim) * 0.02)
+
+        # Transformer encoder
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim,
+            nhead=num_heads,
+            dim_feedforward=embed_dim * 4,
+            dropout=dropout,
+            batch_first=True,
+            norm_first=False  # Post-norm (standard ViT)
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        # Layer normalization
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def _extract_patches(self, grid_states: torch.Tensor) -> torch.Tensor:
+        """Extract non-overlapping patches from integer grid.
+
+        Args:
+            grid_states: [batch, 64, 64] - Integer grid with values 0-15
+
+        Returns:
+            patches: [batch, num_patches_h, num_patches_w, patch_size*patch_size]
+                     [batch, 8, 8, 64] - 64 cells per patch
+        """
+        batch_size = grid_states.shape[0]
+
+        # Unfold to extract patches: [batch, 8, 8, 8, 8]
+        patches = grid_states.unfold(1, self.patch_size, self.patch_size) \
+                            .unfold(2, self.patch_size, self.patch_size)
+
+        # Flatten each patch: [batch, 8, 8, 64]
+        num_patches_per_dim = self.grid_size // self.patch_size
+        patches = patches.reshape(
+            batch_size,
+            num_patches_per_dim,
+            num_patches_per_dim,
+            self.patch_size * self.patch_size  # 64 cells per patch
+        )
+
+        return patches
+
+    def _embed_and_aggregate_patches(self, patches: torch.Tensor) -> torch.Tensor:
+        """Embed each cell and aggregate within patches.
+
+        Args:
+            patches: [batch, 8, 8, 64] - Integer cell values 0-15
+
+        Returns:
+            patch_embeddings: [batch, 8, 8, cell_embed_dim]
+        """
+        # Embed each cell: [batch, 8, 8, 64, cell_embed_dim]
+        cell_embeddings = self.cell_embedding(patches)
+
+        # Aggregate within each patch (mean pooling)
+        # [batch, 8, 8, cell_embed_dim]
+        patch_embeddings = cell_embeddings.mean(dim=3)
+
+        return patch_embeddings
+
+    def forward(self, grid_states: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            grid_states: [batch, 64, 64] - Integer grid with values 0-15
+
+        Returns:
+            state_repr: [batch, embed_dim] - State representations
+        """
+        batch_size = grid_states.shape[0]
+
+        # Extract patches: [batch, 8, 8, 64]
+        patches = self._extract_patches(grid_states)
+
+        # Embed cells and aggregate: [batch, 8, 8, cell_embed_dim]
+        patch_repr = self._embed_and_aggregate_patches(patches)
+
+        # Project to transformer dimension: [batch, 8, 8, embed_dim]
+        x = self.patch_projection(patch_repr)
+
+        # Add 2D positional embeddings
+        x = x + self.pos_embed
+
+        # Flatten to sequence: [batch, 64, embed_dim]
+        x = x.reshape(batch_size, self.num_patches, -1)
+
+        # Prepend CLS token if using
+        if self.use_cls_token:
+            cls_tokens = self.cls_token.expand(batch_size, -1, -1)
+            x = torch.cat([cls_tokens, x], dim=1)  # [batch, 65, embed_dim]
+
+        # Transformer encoding
+        x = self.transformer(x)
+
+        # Extract global representation
+        if self.use_cls_token:
+            state_repr = x[:, 0]  # [batch, embed_dim] - CLS token
+        else:
+            state_repr = x.mean(dim=1)  # [batch, embed_dim] - Average pooling
+
+        # Final normalization
+        state_repr = self.norm(state_repr)
+
         return state_repr
 
 
@@ -100,18 +286,40 @@ class ActionEmbedding(nn.Module):
 
 class DecisionTransformer(nn.Module):
     """End-to-end transformer for ARC-AGI action prediction using state-action sequences."""
-    
-    def __init__(self, embed_dim=256, num_layers=4, num_heads=8, max_context_len=20):
+
+    def __init__(
+        self,
+        embed_dim=256,
+        num_layers=4,
+        num_heads=8,
+        max_context_len=20,
+        # ViT encoder parameters
+        vit_cell_embed_dim=64,
+        vit_patch_size=8,
+        vit_num_layers=4,
+        vit_num_heads=8,
+        vit_dropout=0.1,
+        vit_use_cls_token=True
+    ):
         super().__init__()
-        
-        # Component modules
-        self.state_encoder = StateEncoder(embed_dim=embed_dim, freeze_weights=False)
+
+        # Component modules - Use ViT State Encoder with learned cell embeddings
+        self.state_encoder = ViTStateEncoder(
+            num_colors=16,
+            embed_dim=embed_dim,
+            cell_embed_dim=vit_cell_embed_dim,
+            patch_size=vit_patch_size,
+            num_layers=vit_num_layers,
+            num_heads=vit_num_heads,
+            dropout=vit_dropout,
+            use_cls_token=vit_use_cls_token
+        )
         self.action_embedding = ActionEmbedding(embed_dim=embed_dim)
         
         # Positional encoding for temporal context
         self.pos_embedding = nn.Parameter(torch.randn(max_context_len * 2, embed_dim) * 0.02)
         
-        # Decoder-only transformer (GPT-style)
+        # Decoder-only transformer
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=embed_dim,
             nhead=num_heads,
@@ -268,7 +476,14 @@ class DTAgent(Agent):
             embed_dim=self.pure_dt_config['embed_dim'],
             num_layers=self.pure_dt_config['num_layers'],
             num_heads=self.pure_dt_config['num_heads'],
-            max_context_len=self.pure_dt_config['max_context_len']
+            max_context_len=self.pure_dt_config['max_context_len'],
+            # ViT encoder parameters
+            vit_cell_embed_dim=self.pure_dt_config.get('vit_cell_embed_dim', 64),
+            vit_patch_size=self.pure_dt_config.get('vit_patch_size', 8),
+            vit_num_layers=self.pure_dt_config.get('vit_num_layers', 4),
+            vit_num_heads=self.pure_dt_config.get('vit_num_heads', 8),
+            vit_dropout=self.pure_dt_config.get('vit_dropout', 0.1),
+            vit_use_cls_token=self.pure_dt_config.get('vit_use_cls_token', True)
         ).to(self.device)
 
         self.optimizer = torch.optim.Adam(
@@ -307,28 +522,29 @@ class DTAgent(Agent):
 
     
     def _frame_to_tensor(self, frame_data: FrameData) -> torch.Tensor:
-        """Convert frame data to tensor format for the model."""
+        """Convert frame data to integer tensor for ViT with learned embeddings.
+
+        Returns integer grid [64, 64] with values 0-15 instead of one-hot encoding.
+        This is 16x more memory efficient and aligns with transformer best practices.
+        """
         # Convert frame to numpy array with color indices 0-15
         frame = np.array(frame_data.frame, dtype=np.int64)
-        
+
         # Take the last frame (in case of an animation of frames)
         frame = frame[-1]
-        
+
         assert frame.shape == (self.grid_size, self.grid_size)
-        
-        # One-hot encode: (64, 64) -> (16, 64, 64)
-        tensor = torch.zeros(
-            self.num_colours, self.grid_size, self.grid_size, dtype=torch.float32
-        )
-        tensor.scatter_(0, torch.from_numpy(frame).unsqueeze(0), 1)
-        
+
+        # Keep as integer tensor: (64, 64) with values 0-15
+        tensor = torch.from_numpy(frame).long()
+
         return tensor.to(self.device)
     
     def _compute_experience_hash(self, frame: np.array, action_idx: int) -> str:
         """Compute hash for frame+action combination to ensure uniqueness."""
-        assert frame.shape == (self.num_colours, self.grid_size, self.grid_size)
+        assert frame.shape == (self.grid_size, self.grid_size)
         frame_bytes = frame.tobytes()
-        
+
         # Create hash from frame + action combination
         hash_input = frame_bytes + str(action_idx).encode("utf-8")
         return hashlib.md5(hash_input).hexdigest()
@@ -571,7 +787,8 @@ class DTAgent(Agent):
         )
         
         # Store current frame and action for next experience creation
-        self.prev_frame = current_frame.cpu().numpy().astype(bool)
+        # Keep as integer grid [64, 64] with values 0-15
+        self.prev_frame = current_frame.cpu().numpy().astype(np.int64)
         # Store unified action index: 0-4 for ACTION1-5, 5+ for coordinates
         if action_idx < 5:
             self.prev_action_idx = action_idx
@@ -612,7 +829,14 @@ class DTAgent(Agent):
                 embed_dim=self.pure_dt_config['embed_dim'],
                 num_layers=self.pure_dt_config['num_layers'],
                 num_heads=self.pure_dt_config['num_heads'],
-                max_context_len=self.pure_dt_config['max_context_len']
+                max_context_len=self.pure_dt_config['max_context_len'],
+                # ViT encoder parameters
+                vit_cell_embed_dim=self.pure_dt_config.get('vit_cell_embed_dim', 64),
+                vit_patch_size=self.pure_dt_config.get('vit_patch_size', 8),
+                vit_num_layers=self.pure_dt_config.get('vit_num_layers', 4),
+                vit_num_heads=self.pure_dt_config.get('vit_num_heads', 8),
+                vit_dropout=self.pure_dt_config.get('vit_dropout', 0.1),
+                vit_use_cls_token=self.pure_dt_config.get('vit_use_cls_token', True)
             ).to(self.device)
 
             self.optimizer = torch.optim.Adam(
@@ -644,12 +868,12 @@ class DTAgent(Agent):
 
             # Only store if unique
             if experience_hash not in self.experience_hashes:
-                # Convert current frame to numpy bool for comparison
-                latest_frame_np = latest_frame.cpu().numpy().astype(bool)
+                # Convert current frame to numpy int64 for comparison
+                latest_frame_np = latest_frame.cpu().numpy().astype(np.int64)
                 frame_changed = not np.array_equal(self.prev_frame, latest_frame_np)
 
                 experience = {
-                    "state": self.prev_frame,  # Already numpy bool
+                    "state": self.prev_frame,  # Integer grid [64, 64]
                     "action_idx": self.prev_action_idx,  # Unified action index
                     "reward": 1.0 if frame_changed else 0.0,
                 }
