@@ -350,11 +350,11 @@ class DecisionTransformer(nn.Module):
         
     def build_state_action_sequence(self, states, actions):
         """Build interleaved state-action sequence: [s₀, a₀, s₁, a₁, ..., s_{t-1}, a_{t-1}, s_t]
-        
+
         Args:
-            states: [batch, seq_len+1, 16, 64, 64] - k+1 states (including current)
+            states: [batch, seq_len+1, 64, 64] - k+1 integer grids with cell values 0-15
             actions: [batch, seq_len] - k past actions (excluding current to predict)
-            
+
         Returns:
             sequence: [batch, 2*seq_len+1, embed_dim] - Interleaved state-action sequence
         """
@@ -388,9 +388,9 @@ class DecisionTransformer(nn.Module):
     def forward(self, states, actions):
         """
         Args:
-            states: [batch, seq_len+1, 16, 64, 64] - k+1 states (past + current)
+            states: [batch, seq_len+1, 64, 64] - k+1 integer grids with cell values 0-15 (past + current)
             actions: [batch, seq_len] - k past actions (0-4100)
-            
+
         Returns:
             action_logits: [batch, 4101] - Logits over full action space for next action
         """
@@ -600,8 +600,7 @@ class DTAgent(Agent):
             self.optimizer.step()
             
             # Log training metrics
-            if self.save_action_visualizations:
-                self._log_pure_dt_metrics(loss, metrics, epoch)
+            self._log_pure_dt_metrics(loss, metrics, epoch)
         
         # Log training completion
         final_loss = loss.item() if 'loss' in locals() else 0.0
@@ -728,24 +727,24 @@ class DTAgent(Agent):
         """Log DT training metrics to tensorboard."""
         step = self.action_counter
         
-        self.writer.add_scalar("DT/loss", loss.item(), step)
-        self.writer.add_scalar("DT/accuracy", metrics.get('accuracy', 0), step)
+        self.writer.add_scalar("DTAgent/loss", loss.item(), step)
+        self.writer.add_scalar("DTAgent/accuracy", metrics.get('accuracy', 0), step)
         
         # Log bandit-specific metrics if available
         if 'main_loss' in metrics:
-            self.writer.add_scalar("DT/main_loss", metrics['main_loss'], step)
+            self.writer.add_scalar("DTAgent/main_loss", metrics['main_loss'], step)
         if 'action_entropy' in metrics:
-            self.writer.add_scalar("DT/action_entropy", metrics['action_entropy'], step)
+            self.writer.add_scalar("DTAgent/action_entropy", metrics['action_entropy'], step)
         if 'coord_entropy' in metrics:
-            self.writer.add_scalar("DT/coord_entropy", metrics['coord_entropy'], step)
+            self.writer.add_scalar("DTAgent/coord_entropy", metrics['coord_entropy'], step)
         
         # Loss-type specific metrics
         if 'positive_samples' in metrics:
-            self.writer.add_scalar("DT/positive_samples", metrics['positive_samples'], step)
+            self.writer.add_scalar("DTAgent/positive_samples", metrics['positive_samples'], step)
         if 'high_confidence_frac' in metrics:
-            self.writer.add_scalar("DT/high_confidence_frac", metrics['high_confidence_frac'], step)
+            self.writer.add_scalar("DTAgent/high_confidence_frac", metrics['high_confidence_frac'], step)
         if 'mean_confidence' in metrics:
-            self.writer.add_scalar("DT/mean_confidence", metrics['mean_confidence'], step)
+            self.writer.add_scalar("DTAgent/mean_confidence", metrics['mean_confidence'], step)
     
     def _has_time_elapsed(self) -> bool:
         """Check if 8 hours have elapsed since start."""
