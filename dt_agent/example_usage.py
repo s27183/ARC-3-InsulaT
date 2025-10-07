@@ -56,21 +56,63 @@ def run_pure_dt_agent_example():
 
 def compare_configurations():
     """Example of different Pure DT configurations."""
-    
+
     print("\n📊 Pure DT Configuration Comparison:")
     print("-" * 50)
-    
+
     configs = [
         ('cross_entropy', "Dense updates on all actions"),
         ('selective', "Sparse updates only on positive rewards"),
         ('hybrid', "Confidence-based interpolation between dense/sparse")
     ]
-    
+
     for loss_type, description in configs:
         print(f"• {loss_type:15} - {description}")
-    
+
     print(f"\n💡 To change configuration, modify dt_agent/pure_dt_config.py")
     print(f"   or create custom config files for different experiments.")
+
+
+def demonstrate_vit_configuration():
+    """Demonstrate ViT state encoder configuration options."""
+
+    print("\n🔬 Vision Transformer State Encoder Configuration:")
+    print("-" * 50)
+
+    # Load default config to show ViT settings
+    config = load_dt_config()
+
+    print(f"\n  Current ViT Settings:")
+    print(f"    • Encoder type: {config.get('encoder_type', 'vit')}")
+    print(f"    • Cell embedding dim: {config.get('vit_cell_embed_dim', 64)}")
+    print(f"      → Each color (0-15) maps to {config.get('vit_cell_embed_dim', 64)}-dim learned vector")
+    print(f"    • Patch size: {config.get('vit_patch_size', 8)}×{config.get('vit_patch_size', 8)}")
+    print(f"      → Creates {(64 // config.get('vit_patch_size', 8))**2} patches from 64×64 grid")
+    print(f"      → Each patch: {config.get('vit_patch_size', 8)**2} cells (not {16 * config.get('vit_patch_size', 8)**2} one-hot values)")
+    print(f"    • ViT layers: {config.get('vit_num_layers', 4)}")
+    print(f"    • ViT attention heads: {config.get('vit_num_heads', 8)}")
+    print(f"    • Dropout: {config.get('vit_dropout', 0.1)}")
+    print(f"    • Use CLS token: {config.get('vit_use_cls_token', True)}")
+
+    print(f"\n  ViT Architecture Benefits:")
+    print(f"    ✓ Learned cell embeddings (like word embeddings in NLP)")
+    print(f"    ✓ 16× more efficient than one-hot encoding per patch")
+    print(f"    ✓ 8× smaller input tensors (64×64 integers vs 16×64×64 floats)")
+    print(f"    ✓ Global attention from layer 1 (non-local causality)")
+    print(f"    ✓ Pure transformer hierarchy (ViT spatial + Transformer temporal)")
+    print(f"    ✓ Learned spatial relationships via self-attention")
+    print(f"    ✓ Efficient: O(n²) where n=64 patches (not 4096 cells)")
+
+    print(f"\n  Patch Size Trade-offs:")
+    print(f"    • 4×4 patches → 256 patches, 16 cells each (fine-grained, slower)")
+    print(f"    • 8×8 patches → 64 patches, 64 cells each (balanced, recommended)")
+    print(f"    • 16×16 patches → 16 patches, 256 cells each (coarse, faster)")
+
+    print(f"\n  💡 To customize ViT, modify config.py:")
+    print(f"     DEFAULT_DT_CONFIG['vit_cell_embed_dim'] = 64")
+    print(f"     DEFAULT_DT_CONFIG['vit_patch_size'] = 8")
+    print(f"     DEFAULT_DT_CONFIG['vit_num_layers'] = 4")
+    print(f"     DEFAULT_DT_CONFIG['vit_num_heads'] = 8")
 
 
 def main():
@@ -78,23 +120,27 @@ def main():
     print("=" * 60)
     print("Pure Decision Transformer Agent - Standalone Example")
     print("=" * 60)
-    
+
     # Run the main example
     agent = run_pure_dt_agent_example()
-    
+
     # Show configuration options
     compare_configurations()
-    
+
+    # Demonstrate ViT configuration
+    demonstrate_vit_configuration()
+
     print(f"\n🎯 Key Benefits of Self-Contained Pure DT Agent:")
     print(f"   ✓ No dependency on custom_agents/action.py")
-    print(f"   ✓ Direct import: from dt_agent import PureDTAgent")
-    print(f"   ✓ Full Agent interface compatibility") 
+    print(f"   ✓ Direct import: from dt_agent import DTAgent")
+    print(f"   ✓ Full Agent interface compatibility")
     print(f"   ✓ All infrastructure included (training, logging, viz)")
     print(f"   ✓ Configurable loss functions for different strategies")
-    
+    print(f"   ✓ Vision Transformer for global spatial reasoning")
+
     if agent:
-        print(f"\n✅ Ready to replace custom_agents.Action with dt_agent.PureDTAgent!")
-    
+        print(f"\n✅ Ready to replace custom_agents.Action with dt_agent.DTAgent!")
+
     print("=" * 60)
 
 
