@@ -15,12 +15,12 @@ DEFAULT_DT_CONFIG = {
     "embed_dim": 256,  # Transformer embedding dimension
     "num_layers": 4,  # Number of transformer layers
     "num_heads": 8,  # Number of attention heads
-    "max_context_len": 20,  # Maximum context window for sequences
+    "max_context_len": 100,  # Context window for sequences (training and inference)
     # Training Parameters
     "learning_rate": 1e-4,  # Adam learning rate
     "weight_decay": 1e-5,  # L2 regularization
-    "train_frequency": 5,  # Train every N actions (same as bandit)
-    "min_buffer_size": 5,  # Minimum experience buffer size to start training
+    "train_frequency": 10,  # Train every N actions (reduced to save compute with longer context)
+    "min_buffer_size": 20,  # Minimum experience buffer size to start training
     # Loss Function Configuration
     "loss_type": "bandit",  # Options: 'cross_entropy', 'selective', 'hybrid', 'bandit'
     "selective_confidence_threshold": 0.8,  # For hybrid loss approach
@@ -34,15 +34,14 @@ DEFAULT_DT_CONFIG = {
     "max_buffer_size": 50000,  # Maximum experience buffer size
     "experience_sample_rate": 1.0,  # Fraction of experiences to use for training
     # Sequence Processing
-    "max_training_experiences": 64,  # Maximum sequence length for training
-    "context_length": 5,  # Context window for training/inference
+    "max_training_experiences": 16,  # Batch size for training (reduced to fit longer context)
     "sequence_stride": 1,  # Stride for creating training sequences
     # Model Initialization
     "freeze_cnn_backbone": False,  # Whether to freeze CNN backbone during training
     "use_pretrained_cnn": False,  # Whether to initialize from bandit CNN weights
     "cnn_transfer_path": None,  # Path to bandit model for CNN transfer (auto-detect if None)
     # Training Schedule
-    "epochs_per_training": 5,  # Number of epochs per training session
+    "epochs_per_training": 1,  # Number of epochs per training session
     "gradient_clip_norm": 1.0,  # Gradient clipping norm
     "early_stopping_patience": None,  # Optional early stopping (None = disabled)
     # Logging and Visualization
@@ -65,8 +64,8 @@ CPU_PURE_DT_CONFIG = {
     **DEFAULT_DT_CONFIG,
     "embed_dim": 128,  # Smaller model for CPU
     "num_layers": 2,  # Fewer layers for CPU
-    "context_length": 10,  # Shorter context for CPU
-    "max_training_experiences": 30,
+    "max_context_len": 20,  # Shorter context for CPU
+    "max_training_experiences": 16,  # Smaller batch for CPU
     # ViT configuration for CPU
     "vit_num_layers": 2,  # Fewer ViT layers for CPU
     "vit_num_heads": 4,  # Fewer attention heads for CPU (128/4 = 32)
@@ -78,8 +77,8 @@ GPU_PURE_DT_CONFIG = {
     **DEFAULT_DT_CONFIG,
     "embed_dim": 512,  # Larger model for GPU
     "num_layers": 6,  # More layers for GPU
-    "context_length": 20,  # Longer context for GPU
-    "max_training_experiences": 100,
+    "max_context_len": 100,  # Longer context for GPU (10% of typical 1000-move game)
+    "max_training_experiences": 16,  # Smaller batch to fit longer context in memory
     # ViT configuration for GPU
     "vit_num_layers": 6,  # More ViT layers for GPU
     "vit_num_heads": 16,  # More attention heads for GPU (512/16 = 32)
@@ -168,7 +167,7 @@ def _apply_environment_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
     """Apply environment variable overrides to configuration."""
     env_mapping = {
         "PURE_DT_LEARNING_RATE": ("learning_rate", float),
-        "PURE_DT_CONTEXT_LENGTH": ("context_length", int),
+        "PURE_DT_MAX_CONTEXT_LEN": ("max_context_len", int),
         "PURE_DT_LOSS_TYPE": ("loss_type", str),
         "PURE_DT_TEMPERATURE": ("temperature", float),
         "PURE_DT_EMBED_DIM": ("embed_dim", int),
@@ -191,7 +190,7 @@ def get_loss_config_summary(config: Dict[str, Any]) -> str:
     loss_type = config.get("loss_type", "unknown")
     lr = config.get("learning_rate", "unknown")
     epochs = config.get("epochs_per_training", "unknown")
-    context = config.get("context_length", "unknown")
+    context = config.get("max_context_len", "unknown")
 
     summary = (
         f"Pure DT Config: loss={loss_type}, lr={lr}, epochs={epochs}, context={context}"
@@ -211,7 +210,7 @@ def validate_config(config: Dict[str, Any]) -> bool:
         "num_layers",
         "num_heads",
         "learning_rate",
-        "context_length",
+        "max_context_len",
         "loss_type",
         "temperature",
     ]
@@ -221,8 +220,8 @@ def validate_config(config: Dict[str, Any]) -> bool:
             raise ValueError(f"Missing required config key: {key}")
 
     # Validate ranges
-    if config["context_length"] < 1:
-        raise ValueError("context_length must be >= 1")
+    if config["max_context_len"] < 1:
+        raise ValueError("max_context_len must be >= 1")
 
     if config["temperature"] < 0:
         raise ValueError("temperature must be >= 0")
