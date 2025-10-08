@@ -604,7 +604,7 @@ class DTAgent(Agent):
             self.pure_dt_config["max_training_experiences"],
         )
 
-        if sample_size < self.pure_dt_config["context_length"] + 1:
+        if sample_size < self.pure_dt_config["max_context_len"] + 1:
             return
 
         # Create training sequences from experience buffer
@@ -672,7 +672,7 @@ class DTAgent(Agent):
     def _create_training_sequences(self, sample_size):
         """Create state-action sequences for DT training."""
         sequences = []
-        context_len = self.pure_dt_config["context_length"]
+        context_len = self.pure_dt_config["max_context_len"]
 
         # Ensure sample_size is an integer
         sample_size = int(sample_size)
@@ -950,30 +950,6 @@ class DTAgent(Agent):
             self.logger.info("Cleared experience buffer - new level reached")
             print("Cleared experience buffer - new level reached")
 
-            # Reset DT model and optimizer for new level
-            self.pure_dt_model = DecisionTransformer(
-                embed_dim=self.pure_dt_config["embed_dim"],
-                num_layers=self.pure_dt_config["num_layers"],
-                num_heads=self.pure_dt_config["num_heads"],
-                max_context_len=self.pure_dt_config["max_context_len"],
-                # ViT encoder parameters
-                vit_cell_embed_dim=self.pure_dt_config.get("vit_cell_embed_dim", 64),
-                vit_patch_size=self.pure_dt_config.get("vit_patch_size", 8),
-                vit_num_layers=self.pure_dt_config.get("vit_num_layers", 4),
-                vit_num_heads=self.pure_dt_config.get("vit_num_heads", 8),
-                vit_dropout=self.pure_dt_config.get("vit_dropout", 0.1),
-                vit_use_cls_token=self.pure_dt_config.get("vit_use_cls_token", True),
-            ).to(self.device)
-
-            self.optimizer = torch.optim.Adam(
-                self.pure_dt_model.parameters(),
-                lr=self.pure_dt_config["learning_rate"],
-                weight_decay=self.pure_dt_config["weight_decay"],
-            )
-
-            self.logger.info("Reset DT model and optimizer for new level")
-            print("Reset DT model and optimizer for new level")
-
             # Reset previous tracking
             self.prev_frame = None
             self.prev_action_idx = None
@@ -1027,7 +1003,7 @@ class DTAgent(Agent):
     ) -> tuple[int, int, GameAction]:
         with torch.no_grad():
             # Build state-action sequence and get logits
-            context_length = self.pure_dt_config["context_length"]
+            max_context_len = self.pure_dt_config["max_context_len"]
 
             # Cold start - random valid action if no experience
             if len(self.experience_buffer) < 1:
@@ -1046,7 +1022,7 @@ class DTAgent(Agent):
             else:
                 # Build state-action sequence for inference
                 states, actions = self._build_inference_sequence(
-                    latest_frame_torch, context_length
+                    latest_frame_torch, max_context_len
                 )
 
                 # Get action logits from DT
@@ -1177,10 +1153,10 @@ class DTAgent(Agent):
             action.reasoning = "Random action (no constraints available)"
             return action
 
-    def _build_inference_sequence(self, current_frame, context_length):
+    def _build_inference_sequence(self, current_frame, max_context_len):
         """Build state-action sequence for Decision Transformer inference."""
-        # Get recent experiences up to context length
-        available_context = min(int(context_length), len(self.experience_buffer))
+        # Get recent experiences up to max context length
+        available_context = min(int(max_context_len), len(self.experience_buffer))
         recent_experiences = (
             list(self.experience_buffer)[-available_context:]
             if available_context > 0
