@@ -220,7 +220,8 @@ class ViTStateEncoder(nn.Module):
             patch_embeddings: [batch, 8, 8, cell_embed_dim]
         """
         # Embed each cell: [batch, 8, 8, 64, cell_embed_dim]
-        cell_embeddings = self.cell_embedding(patches)
+        # Ensure integer type for embedding lookup
+        cell_embeddings = self.cell_embedding(patches.long())
 
         # Aggregate within each patch (mean pooling)
         # [batch, 8, 8, cell_embed_dim]
@@ -461,7 +462,7 @@ class DecisionTransformer(nn.Module):
         )  # [batch, 4101]
 
         return {
-            "changed_logits": change_logits,
+            "change_logits": change_logits,
             "completion_logits": completion_logits,
         }
 
@@ -492,10 +493,6 @@ class DTAgent(Agent):
         # Override MAX_ACTIONS - no limit for DT
         self.MAX_ACTIONS = float("inf")
 
-        # Device configuration
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"DT Agent using device: {self.device}")
-
         # Setup experiment directory and logging
         self.base_dir, log_file = setup_experiment_directory()
         setup_logging(log_file)
@@ -506,13 +503,15 @@ class DTAgent(Agent):
         os.makedirs(tensorboard_dir, exist_ok=True)
         self.writer = SummaryWriter(tensorboard_dir)
 
+        # Device configuration
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.logger.info(f"DT Agent using device: {self.device}")
+
         # Model initialization
         self.pure_dt_config = load_dt_config(device=str(self.device))
         validate_config(self.pure_dt_config)
 
         config_summary = get_loss_config_summary(self.pure_dt_config)
-        self.logger.info(f"DT initialized: {config_summary}")
-        print(f"DT initialized: {config_summary}")
 
         self.pure_dt_model = DecisionTransformer(
             embed_dim=self.pure_dt_config["embed_dim"],
@@ -540,7 +539,7 @@ class DTAgent(Agent):
         self.num_colours = 16
 
         # Scores as level indicators
-        self.current_score = 0
+        self.current_score = None
 
         # Experience buffer for training with uniqueness tracking
         self.experience_buffer = deque(maxlen=self.pure_dt_config["max_buffer_size"])
@@ -558,30 +557,25 @@ class DTAgent(Agent):
             GameAction.ACTION4,
             GameAction.ACTION5,
         ]
-
-        print(f"DT Agent logging to: {tensorboard_dir}")
         self.logger.info(f"DT Agent initialized for game_id: {self.game_id}")
 
-    def _frame_to_tensor(self, frame_data: FrameData) -> torch.Tensor:
+    def _frame_to_tensor(self, latest_frame: FrameData) -> None | torch.Tensor:
         """Convert frame data to integer tensor for ViT with learned embeddings.
 
         Returns integer grid [64, 64] with values 0-15 instead of one-hot encoding.
         This is 16x more memory efficient and aligns with transformer best practices.
         """
-        # Convert frame to numpy array with color indices 0-15
-        frame = np.array(frame_data.frame, dtype=np.int64)
-
-        # Take the last frame (in case of an animation of frames)
-        frame = frame[-1]
+        # Convert the frame to a numpy array
+        frame = np.array(latest_frame.frame[-1], dtype=np.int64)
 
         assert frame.shape == (self.grid_size, self.grid_size)
 
         # Keep as integer tensor: (64, 64) with values 0-15
         tensor = torch.from_numpy(frame).long()
 
-        return tensor.to(self.device)
+        return tensor
 
-    def _compute_experience_hash(self, frame: np.array, action_idx: int) -> str:
+    def _hash_experience(self, frame: np.array, action_idx: int) -> str:
         """Compute hash for frame+action combination to ensure uniqueness."""
         assert frame.shape == (self.grid_size, self.grid_size)
         frame_bytes = frame.tobytes()
@@ -692,9 +686,9 @@ class DTAgent(Agent):
             # Build state sequence [s_0, s_1, ..., s_k] (k+1 states)
             states = []
             for exp in sequence_experiences:
-                state_tensor = torch.from_numpy(exp["state"]).float()
+                state_tensor = torch.from_numpy(exp["state"]).long()
                 states.append(state_tensor)
-            states = torch.stack(states)  # [k+1, 16, 64, 64]
+            states = torch.stack(states)  # [k+1, 64, 64]
 
             # Build action sequence [a_0, a_1, ..., a_{k-1}] (k past actions)
             actions = []
@@ -881,14 +875,23 @@ class DTAgent(Agent):
             action: The action to take
         """
 
+        # Check level completion
+        self._check_level_completion(latest_frame=latest_frame)
+
+        # Reset when the game state is either NOT_PLAYED or GAME_OVER
+        if latest_frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
+            self.prev_frame = None
+            self.prev_action_idx = None
+            action = GameAction.RESET
+            action.reasoning = "Game needs reset."
+            return action
+
         # Convert current frame to torch tensor
         current_frame = self._frame_to_tensor(latest_frame)
 
         # Store unique experience
-        self._store_experience(current_frame, current_score=latest_frame.score)
-
-        # Reset the game when certain conditions are met
-        self._reset_if_required(latest_frame=latest_frame)
+        if current_frame is not None:
+            self._store_experience(current_frame, current_score=latest_frame.score)
 
         # If frame processing failed, reset tracking and return random action
         if current_frame is None:
@@ -897,7 +900,7 @@ class DTAgent(Agent):
             self.prev_action_idx = None
             action = random.choice(self.action_list[:5])  # Random ACTION1-ACTION5
             action.reasoning = (
-                f"Skipped error frame, use a random action - {action.value}"
+                f"Encountered a no-op frame, use a random action - {action.value}"
             )
             return action
 
@@ -909,6 +912,7 @@ class DTAgent(Agent):
         # Store current frame and action for next experience creation
         # Keep as integer grid [64, 64] with values 0-15
         self.prev_frame = current_frame.cpu().numpy().astype(np.int64)
+
         # Store unified action index: 0-4 for ACTION1-5, 5+ for coordinates
         if action_idx < 5:
             self.prev_action_idx = action_idx
@@ -933,14 +937,11 @@ class DTAgent(Agent):
 
         return selected_action
 
-    def _reset_if_required(self, latest_frame: FrameData) -> None | GameAction:
+    def _check_level_completion(self, latest_frame: FrameData) -> None | GameAction:
         # Check if score has changed and log score at action count
 
-        if latest_frame.score != self.current_score or self.current_score == 0:
+        if latest_frame.score != self.current_score:
             self.logger.info(
-                f"Score changed from {self.current_score} to {latest_frame.score} at action {self.action_counter}"
-            )
-            print(
                 f"Score changed from {self.current_score} to {latest_frame.score} at action {self.action_counter}"
             )
 
@@ -948,25 +949,17 @@ class DTAgent(Agent):
             self.experience_buffer.clear()
             self.experience_hashes.clear()
             self.logger.info("Cleared experience buffer - new level reached")
-            print("Cleared experience buffer - new level reached")
 
             # Reset previous tracking
             self.prev_frame = None
             self.prev_action_idx = None
             self.current_score = latest_frame.score
 
-        if latest_frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
-            # Reset previous tracking on game reset
-            self.prev_frame = None
-            self.prev_action_idx = None
-            action = GameAction.RESET
-            action.reasoning = "Game needs reset."
-            return action
 
     def _store_experience(self, current_frame: torch.Tensor, current_score: int):
         if self.prev_frame is not None:
             # Compute hash for uniqueness check
-            experience_hash = self._compute_experience_hash(
+            experience_hash = self._hash_experience(
                 self.prev_frame, self.prev_action_idx
             )
 
@@ -1126,6 +1119,9 @@ class DTAgent(Agent):
         )
         probs_sampling = change_probs_sampling * completion_probs_sampling
 
+        # Renormalize after multiplication (to ensure sum=1.0 for np.random.choice)
+        probs_sampling = probs_sampling / probs_sampling.sum()
+
         # Sample from normalized space
         selected_idx = np.random.choice(
             len(probs_sampling), p=probs_sampling.cpu().numpy()
@@ -1166,7 +1162,7 @@ class DTAgent(Agent):
         # Build states: recent states + current state
         states_list = []
         for exp in recent_experiences:
-            states_list.append(torch.from_numpy(exp["state"]).float())
+            states_list.append(torch.from_numpy(exp["state"]).long())
         states_list.append(current_frame)  # Add current state
 
         # Build actions: recent actions (no current action - we're predicting it)
