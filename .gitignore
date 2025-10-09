@@ -22,10 +22,8 @@ tests/recordings/not-a-recording.txt
 memory.db
 
 __pycache__/
-logs.log
 recordings/
-logs
-runs
+**/logs
 
 # docs
 **/docs
