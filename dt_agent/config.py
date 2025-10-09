@@ -37,11 +37,6 @@ DEFAULT_DT_CONFIG = {
     "max_training_experiences": 16,  # Batch size for training (reduced to fit longer context)
     "sequence_stride": 1,  # Stride for creating training sequences
 
-    # Model Initialization
-    "freeze_cnn_backbone": False,  # Whether to freeze CNN backbone during training
-    "use_pretrained_cnn": False,  # Whether to initialize from bandit CNN weights
-    "cnn_transfer_path": None,  # Path to bandit model for CNN transfer (auto-detect if None)
-
     # Training Schedule
     "epochs_per_training": 1,  # Number of epochs per training session
     "gradient_clip_norm": 1.0,  # Gradient clipping norm
@@ -216,7 +211,6 @@ def validate_config(config: Dict[str, Any]) -> bool:
         "learning_rate",
         "max_context_len",
         "loss_type",
-        "temperature",
     ]
 
     for key in required_keys:
@@ -226,9 +220,6 @@ def validate_config(config: Dict[str, Any]) -> bool:
     # Validate ranges
     if config["max_context_len"] < 1:
         raise ValueError("max_context_len must be >= 1")
-
-    if config["temperature"] < 0:
-        raise ValueError("temperature must be >= 0")
 
     if config["loss_type"] not in ["cross_entropy", "selective", "hybrid", "bandit"]:
         raise ValueError(f"Invalid loss_type: {config['loss_type']}")
