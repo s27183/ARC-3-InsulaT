@@ -34,7 +34,7 @@ DEFAULT_DT_CONFIG = {
     "experience_sample_rate": 1.0,  # Fraction of experiences to use for training
 
     # Sequence Processing
-    "max_training_experiences": 16,  # Batch size for training (reduced to fit longer context)
+    "batch_size": 16,  # Batch size for training (reduced to fit longer context)
     "sequence_stride": 1,  # Stride for creating training sequences
 
     # Training Schedule
@@ -64,7 +64,7 @@ CPU_PURE_DT_CONFIG = {
     "embed_dim": 128,  # Smaller model for CPU
     "num_layers": 2,  # Fewer layers for CPU
     "max_context_len": 20,  # Shorter context for CPU
-    "max_training_experiences": 16,  # Smaller batch for CPU
+    "batch_size": 16,  # Smaller batch for CPU
     # ViT configuration for CPU
     "vit_num_layers": 2,  # Fewer ViT layers for CPU
     "vit_num_heads": 4,  # Fewer attention heads for CPU (128/4 = 32)
@@ -77,7 +77,7 @@ GPU_PURE_DT_CONFIG = {
     "embed_dim": 512,  # Larger model for GPU
     "num_layers": 6,  # More layers for GPU
     "max_context_len": 100,  # Longer context for GPU (10% of typical 1000-move game)
-    "max_training_experiences": 16,  # Smaller batch to fit longer context in memory
+    "batch_size": 16,  # Smaller batch to fit longer context in memory
     # ViT configuration for GPU
     "vit_num_layers": 6,  # More ViT layers for GPU
     "vit_num_heads": 16,  # More attention heads for GPU (512/16 = 32)
