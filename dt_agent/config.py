@@ -16,39 +16,43 @@ DEFAULT_DT_CONFIG = {
     "num_layers": 4,  # Number of transformer layers
     "num_heads": 8,  # Number of attention heads
     "max_context_len": 100,  # Context window for sequences (training and inference)
+
     # Training Parameters
     "learning_rate": 1e-4,  # Adam learning rate
     "weight_decay": 1e-5,  # L2 regularization
     "train_frequency": 10,  # Train every N actions (reduced to save compute with longer context)
     "min_buffer_size": 20,  # Minimum experience buffer size to start training
+
     # Loss Function Configuration
     "loss_type": "bandit",  # Options: 'cross_entropy', 'selective', 'hybrid', 'bandit'
     "selective_confidence_threshold": 0.8,  # For hybrid loss approach
     "action_entropy_coeff": 0.0001,  # Entropy coefficient for discrete actions (bandit loss)
     "coord_entropy_coeff": 0.00001,  # Entropy coefficient for coordinates (bandit loss)
-    # Action Sampling
-    "temperature": 1.0,  # Temperature for action sampling (1.0 = normal, 0.0 = greedy)
-    "temperature_decay": 0.99,  # Optional temperature decay over time
-    "min_temperature": 0.1,  # Minimum temperature floor
+
     # Experience Management
     "max_buffer_size": 200000,  # Maximum experience buffer size
     "experience_sample_rate": 1.0,  # Fraction of experiences to use for training
+
     # Sequence Processing
     "max_training_experiences": 16,  # Batch size for training (reduced to fit longer context)
     "sequence_stride": 1,  # Stride for creating training sequences
+
     # Model Initialization
     "freeze_cnn_backbone": False,  # Whether to freeze CNN backbone during training
     "use_pretrained_cnn": False,  # Whether to initialize from bandit CNN weights
     "cnn_transfer_path": None,  # Path to bandit model for CNN transfer (auto-detect if None)
+
     # Training Schedule
     "epochs_per_training": 1,  # Number of epochs per training session
     "gradient_clip_norm": 1.0,  # Gradient clipping norm
     "early_stopping_patience": None,  # Optional early stopping (None = disabled)
+
     # Logging and Visualization
     "log_training_metrics": True,  # Log training metrics to tensorboard
     "log_action_distributions": True,  # Log action probability distributions
     "save_model_checkpoints": False,  # Save model checkpoints during training
     "checkpoint_frequency": 1000,  # Save checkpoint every N training steps
+
     # ViT State Encoder Configuration
     "encoder_type": "vit",  # Options: 'cnn', 'vit'
     "vit_patch_size": 8,  # Patch size (8×8 = 64 patches for 64×64 grid)
