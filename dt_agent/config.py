@@ -31,7 +31,7 @@ DEFAULT_DT_CONFIG = {
     "temperature_decay": 0.99,  # Optional temperature decay over time
     "min_temperature": 0.1,  # Minimum temperature floor
     # Experience Management
-    "max_buffer_size": 50000,  # Maximum experience buffer size
+    "max_buffer_size": 200000,  # Maximum experience buffer size
     "experience_sample_rate": 1.0,  # Fraction of experiences to use for training
     # Sequence Processing
     "max_training_experiences": 16,  # Batch size for training (reduced to fit longer context)
