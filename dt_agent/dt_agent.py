@@ -325,8 +325,10 @@ class DecisionTransformer(nn.Module):
         self.action_embedding = ActionEmbedding(embed_dim=embed_dim)
 
         # Positional encoding for temporal context
+        # Sequence: state0, action0, state1, action1, ..., state_k (final state)
+        # Total positions: max_context_len * 2 + 1
         self.pos_embedding = nn.Parameter(
-            torch.randn(max_context_len * 2, embed_dim) * 0.02
+            torch.randn(max_context_len * 2 + 1, embed_dim) * 0.02
         )
 
         # Decoder-only transformer
@@ -575,14 +577,17 @@ class DTAgent(Agent):
 
         return tensor
 
-    def _hash_experience(self, frame: np.array, action_idx: int) -> str:
-        """Compute hash for frame+action combination to ensure uniqueness."""
-        assert frame.shape == (self.grid_size, self.grid_size)
-        frame_bytes = frame.tobytes()
+    def _hash_experience(self, frame: np.ndarray, action_idx: int) -> str:
+        """Compute hash for frame+action combination using BLAKE2b.
 
-        # Create hash from frame + action combination
-        hash_input = frame_bytes + str(action_idx).encode("utf-8")
-        return hashlib.md5(hash_input).hexdigest()
+        Input: frame shape [64, 64] + action_idx (int)
+        Output: 64-character hex string (512-bit hash)
+        """
+        assert frame.shape == (self.grid_size, self.grid_size)
+
+        # Combine frame bytes and action
+        hash_input = frame.tobytes() + str(action_idx).encode("utf-8")
+        return hashlib.blake2b(hash_input).hexdigest()
 
     def _train_dt_model(self):
         """Train the Pure Decision Transformer on collected experiences using configurable loss."""
@@ -880,8 +885,11 @@ class DTAgent(Agent):
 
         # Reset when the game state is either NOT_PLAYED or GAME_OVER
         if latest_frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
+            self.experience_buffer.clear()
+            self.experience_hashes.clear()
             self.prev_frame = None
             self.prev_action_idx = None
+            self.current_score = None
             action = GameAction.RESET
             action.reasoning = "Game needs reset."
             return action
