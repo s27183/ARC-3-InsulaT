@@ -18,96 +18,27 @@ Key Features:
 - Reuses bandit CNN for spatial reasoning
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from typing import Any
-import numpy as np
 import random
 import time
 import logging
-import os
-import sys
 import hashlib
 from collections import deque
+from pathlib import Path
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 from agents.agent import Agent
 from agents.structs import FrameData, GameAction, GameState
 
 from dt_agent.utils import (
-    setup_experiment_directory,
-    setup_logging,
-    get_environment_directory,
+    setup_logging
 )
 from dt_agent.config import load_dt_config, get_loss_config_summary, validate_config
-
-
-# ============================================================================
-# DEPRECATED: CNN StateEncoder (replaced by ViTStateEncoder)
-# ============================================================================
-# This CNN-based StateEncoder has been replaced by ViTStateEncoder for better
-# handling of non-local causality in ARC-AGI-3. The Vision Transformer provides
-# global attention from layer 1, which is critical for dynamic grid games.
-#
-# Keeping this class for reference and potential future comparisons.
-# ============================================================================
-
-
-class StateEncoder(nn.Module):
-    """
-    [DEPRECATED] CNN State Encoder - replaced by ViTStateEncoder.
-
-    This CNN-based encoder uses 4 convolutional layers for spatial reasoning.
-    It has been replaced by ViTStateEncoder which provides:
-    - Global attention from layer 1 (better for non-local causality)
-    - Hierarchical transformer architecture (ViT spatial + Transformer temporal)
-    - Learned spatial relationships via self-attention
-
-    Kept for reference and potential CNN vs ViT comparisons.
-    """
-
-    def __init__(self, input_channels=16, embed_dim=256, freeze_weights=False):
-        super().__init__()
-
-        # Shared convolutional backbone (from bandit ActionModel)
-        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.conv4 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
-
-        # Spatial pooling and projection to transformer dimension
-        self.spatial_pool = nn.AdaptiveAvgPool2d(1)  # 256×64×64 → 256×1×1
-        self.state_projection = nn.Linear(256, embed_dim)
-
-        if freeze_weights:
-            # Option: freeze pre-trained bandit weights for transfer learning
-            for param in self.parameters():
-                param.requires_grad = False
-
-    def forward(self, grid_states):
-        """
-        Args:
-            grid_states: [batch, 16, 64, 64] - One-hot encoded grids
-        Returns:
-            state_repr: [batch, embed_dim] - State representations
-        """
-        # Shared convolutional backbone
-        x = F.relu(self.conv1(grid_states))  # [batch, 32, 64, 64]
-        x = F.relu(self.conv2(x))  # [batch, 64, 64, 64]
-        x = F.relu(self.conv3(x))  # [batch, 128, 64, 64]
-        x = F.relu(self.conv4(x))  # [batch, 256, 64, 64]
-
-        # Global spatial representation
-        x = self.spatial_pool(x).flatten(1)  # [batch, 256]
-        state_repr = self.state_projection(x)  # [batch, embed_dim]
-
-        return state_repr
-
-
-# ============================================================================
-# End of deprecated CNN StateEncoder
-# ============================================================================
 
 
 class ViTStateEncoder(nn.Module):
@@ -496,14 +427,15 @@ class DTAgent(Agent):
         self.MAX_ACTIONS = float("inf")
 
         # Setup experiment directory and logging
-        self.base_dir, log_file = setup_experiment_directory()
+        base_dir = Path.cwd() / "dt_agent/logs"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        log_file = base_dir / "run.log"
         setup_logging(log_file)
         self.logger = logging.getLogger(f"DTAgent_{self.game_id}")
 
-        env_dir = get_environment_directory(self.base_dir, self.game_id)
-        tensorboard_dir = os.path.join(env_dir, "tensorboard")
-        os.makedirs(tensorboard_dir, exist_ok=True)
-        self.writer = SummaryWriter(tensorboard_dir)
+        tensorboard_dir = base_dir / f"{self.game_id}/tensorboard"
+        tensorboard_dir.mkdir(parents=True, exist_ok=True)
+        self.writer = SummaryWriter(str(tensorboard_dir))
 
         # Device configuration
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -589,10 +521,10 @@ class DTAgent(Agent):
         hash_input = frame.tobytes() + str(action_idx).encode("utf-8")
         return hashlib.blake2b(hash_input).hexdigest()
 
-    def _train_dt_model(self):
+    def _train_dt_model(self) -> None:
         """Train the Pure Decision Transformer on collected experiences using configurable loss."""
         if len(self.experience_buffer) < self.pure_dt_config["min_buffer_size"]:
-            return
+            return None
 
         # Sample experiences for sequence creation
         sample_size = min(
@@ -600,16 +532,14 @@ class DTAgent(Agent):
                 len(self.experience_buffer)
                 * self.pure_dt_config["experience_sample_rate"]
             ),
-            self.pure_dt_config["max_training_experiences"],
+            self.pure_dt_config["batch_size"],
         )
-
-        if sample_size < self.pure_dt_config["max_context_len"] + 1:
-            return
 
         # Create training sequences from experience buffer
         sequences = self._create_training_sequences(sample_size)
+
         if not sequences:
-            return
+            return None
 
         # Convert sequences to tensors
         states_batch = torch.stack([seq["states"] for seq in sequences]).to(self.device)
@@ -628,9 +558,11 @@ class DTAgent(Agent):
 
         # Log training start info
         num_sequences = len(sequences)
-        self.logger.info(f"🎯 Starting DT training: {num_sequences} sequences")
+        self.logger.info(f"🎯 Starting DT training. Game: {self.game_id}. {num_sequences} sequences")
+        print(f"🎯 Starting DT training. Game: {self.game_id}. {num_sequences} sequences")
 
         # Training loop with configurable epochs
+        self.pure_dt_model.train()
         for epoch in range(self.pure_dt_config["epochs_per_training"]):
             self.optimizer.zero_grad()
 
@@ -659,19 +591,29 @@ class DTAgent(Agent):
             self._log_pure_dt_metrics(loss, metrics, epoch)
 
         # Log training completion
-        final_loss = loss.item() if "loss" in locals() else 0.0
-        final_accuracy = metrics.get("accuracy", 0.0) if "metrics" in locals() else 0.0
+        final_loss = metrics.get("total_loss", 0.0)
+        final_accuracy = metrics.get("accuracy", 0.0)
         self.logger.info(
-            f"✅ DT training completed: final_loss={final_loss:.4f}, accuracy={final_accuracy:.3f}"
+            f"✅ DT training completed. Game: {self.game_id}. loss={final_loss:.4f}, accuracy={final_accuracy:.3f}"
         )
 
         # Clean up GPU memory
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     def _create_training_sequences(self, sample_size):
-        """Create state-action sequences for DT training."""
+        """Create state-action sequences for DT training with adaptive context length."""
         sequences = []
-        context_len = self.pure_dt_config["max_context_len"]
+
+        # Adaptive context: start small, grow to max as buffer fills
+        # This enables progressive training: buffer@20 → seq_len=19, buffer@100+ → seq_len=100
+        context_len = min(
+            self.pure_dt_config["max_context_len"],
+            len(self.experience_buffer) - 1  # Leave room for at least one sequence
+        )
+
+        # Need at least 2 experiences to create one sequence
+        if context_len < 2:
+            return []
 
         # Ensure sample_size is an integer
         sample_size = int(sample_size)
@@ -731,7 +673,7 @@ class DTAgent(Agent):
         target_actions: torch.Tensor,
         change_rewards: torch.Tensor,
         completion_rewards: torch.Tensor,
-    ):
+    ) -> tuple[torch.Tensor, dict[str, float]]:
         """
         Compute configurable loss for DT training.
 
@@ -891,7 +833,7 @@ class DTAgent(Agent):
             self.prev_action_idx = None
             self.current_score = None
             action = GameAction.RESET
-            action.reasoning = "Game needs reset."
+            action.reasoning = "Game needs reset due to NOT_PLAYED or GAME_OVER"
             return action
 
         # Convert current frame to torch tensor
@@ -903,7 +845,7 @@ class DTAgent(Agent):
 
         # If frame processing failed, reset tracking and return random action
         if current_frame is None:
-            print("Error detected!")
+            print("Error detected in converting latest frame to tensor!")
             self.prev_frame = None
             self.prev_action_idx = None
             action = random.choice(self.action_list[:5])  # Random ACTION1-ACTION5
@@ -930,18 +872,19 @@ class DTAgent(Agent):
         # Increment action counter
         self.action_counter += 1
 
-        # Train DT model periodically
+        # Train DT model at regular frequency
         if self.action_counter % self.train_frequency == 0:
             buffer_size = len(self.experience_buffer)
             if buffer_size >= self.pure_dt_config["min_buffer_size"]:
                 self.logger.info(
-                    f"🤖 Training DT model... (buffer size: {buffer_size})"
+                    f"🤖 Training DT model. Game: {self.game_id} with (buffer size: {buffer_size})"
                 )
                 self._train_dt_model()
             else:
                 self.logger.debug(
                     f"Skipping training: buffer size {buffer_size} < min_buffer_size {self.pure_dt_config['min_buffer_size']}"
                 )
+
 
         return selected_action
 
@@ -1002,6 +945,8 @@ class DTAgent(Agent):
     def select_action(
         self, latest_frame_torch: torch.Tensor, latest_frame: FrameData
     ) -> tuple[int, int, GameAction]:
+
+        self.pure_dt_model.eval()
         with torch.no_grad():
             # Build state-action sequence and get logits
             max_context_len = self.pure_dt_config["max_context_len"]
