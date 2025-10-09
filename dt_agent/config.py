@@ -21,7 +21,7 @@ DEFAULT_DT_CONFIG = {
     "learning_rate": 1e-4,  # Adam learning rate
     "weight_decay": 1e-5,  # L2 regularization
     "train_frequency": 10,  # Train every N actions (reduced to save compute with longer context)
-    "min_buffer_size": 20,  # Minimum experience buffer size to start training
+    "min_buffer_size": 10,  # Minimum experience buffer size to start training
 
     # Loss Function Configuration
     "loss_type": "bandit",  # Options: 'cross_entropy', 'selective', 'hybrid', 'bandit'
