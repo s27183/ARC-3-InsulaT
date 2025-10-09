@@ -563,6 +563,7 @@ class DTAgent(Agent):
 
         # Training loop with configurable epochs
         self.pure_dt_model.train()
+        #TODO: more epochs may benefit longer sequences, but the downside is overfitting?
         for epoch in range(self.pure_dt_config["epochs_per_training"]):
             self.optimizer.zero_grad()
 
@@ -905,6 +906,8 @@ class DTAgent(Agent):
             self.prev_frame = None
             self.prev_action_idx = None
             self.current_score = latest_frame.score
+
+            #TODO: Should we reset the model as well? But retaining the model across levels may lead to better generalization
 
 
     def _store_experience(self, current_frame: torch.Tensor, current_score: int):
