@@ -24,32 +24,19 @@ DEFAULT_DT_CONFIG = {
     "min_buffer_size": 10,  # Minimum experience buffer size to start training
 
     # Loss Function Configuration
-    "loss_type": "bandit",  # Options: 'cross_entropy', 'selective', 'hybrid', 'bandit'
-    "selective_confidence_threshold": 0.8,  # For hybrid loss approach
-    "action_entropy_coeff": 0.0001,  # Entropy coefficient for discrete actions (bandit loss)
-    "coord_entropy_coeff": 0.00001,  # Entropy coefficient for coordinates (bandit loss)
+    "action_entropy_coeff": 0.0001,  # Entropy coefficient for discrete actions
+    "coord_entropy_coeff": 0.00001,  # Entropy coefficient for coordinates
 
     # Experience Management
     "max_buffer_size": 200000,  # Maximum experience buffer size
     "experience_sample_rate": 1.0,  # Fraction of experiences to use for training
 
-    # Sequence Processing
-    "batch_size": 16,  # Batch size for training (reduced to fit longer context)
-    "sequence_stride": 1,  # Stride for creating training sequences
-
     # Training Schedule
+    "batch_size": 16,  # Batch size for training (reduced to fit longer context)
     "epochs_per_training": 1,  # Number of epochs per training session
     "gradient_clip_norm": 1.0,  # Gradient clipping norm
-    "early_stopping_patience": None,  # Optional early stopping (None = disabled)
-
-    # Logging and Visualization
-    "log_training_metrics": True,  # Log training metrics to tensorboard
-    "log_action_distributions": True,  # Log action probability distributions
-    "save_model_checkpoints": False,  # Save model checkpoints during training
-    "checkpoint_frequency": 1000,  # Save checkpoint every N training steps
 
     # ViT State Encoder Configuration
-    "encoder_type": "vit",  # Options: 'cnn', 'vit'
     "vit_patch_size": 8,  # Patch size (8×8 = 64 patches for 64×64 grid)
     "vit_num_layers": 4,  # ViT transformer layers
     "vit_num_heads": 8,  # ViT attention heads
@@ -85,46 +72,12 @@ GPU_PURE_DT_CONFIG = {
     "vit_cell_embed_dim": 128,  # Larger cell embeddings for GPU
 }
 
-# Loss function specific configurations
-CROSS_ENTROPY_CONFIG = {
-    **DEFAULT_DT_CONFIG,
-    "loss_type": "cross_entropy",
-    "learning_rate": 1e-4,  # Standard learning rate for dense gradients
-    "epochs_per_training": 1,  # Single epoch for fast dense updates
-}
 
-SELECTIVE_CONFIG = {
-    **DEFAULT_DT_CONFIG,
-    "loss_type": "selective",
-    "learning_rate": 5e-4,  # Higher learning rate for sparse gradients
-    "epochs_per_training": 3,  # More epochs for sparse selective updates
-}
-
-HYBRID_CONFIG = {
-    **DEFAULT_DT_CONFIG,
-    "loss_type": "hybrid",
-    "selective_confidence_threshold": 0.8,
-    "learning_rate": 2e-4,  # Balanced learning rate
-    "epochs_per_training": 2,  # Balanced epoch count
-}
-
-BANDIT_CONFIG = {
-    **DEFAULT_DT_CONFIG,
-    "loss_type": "bandit",
-    "learning_rate": 1e-4,  # Same as original bandit
-    "epochs_per_training": 1,  # Single epoch like original bandit
-    "action_entropy_coeff": 0.0001,  # Action exploration bonus
-    "coord_entropy_coeff": 0.00001,  # Coordinate exploration bonus
-    "weight_decay": 0,  # No weight decay (bandit doesn't use it)
-}
-
-
-def load_dt_config(device: str = None, loss_type: str = None) -> Dict[str, Any]:
-    """Load Pure DT configuration based on device and loss type preferences.
+def load_dt_config(device: str = None) -> Dict[str, Any]:
+    """Load Pure DT configuration based on device.
 
     Args:
         device: 'cpu', 'cuda', or None for auto-detection
-        loss_type: 'cross_entropy', 'selective', 'hybrid', or None for default
 
     Returns:
         Configuration dictionary
@@ -146,16 +99,6 @@ def load_dt_config(device: str = None, loss_type: str = None) -> Dict[str, Any]:
         else:
             config.update(CPU_PURE_DT_CONFIG)
 
-    # Apply loss-specific config
-    if loss_type == "cross_entropy":
-        config.update(CROSS_ENTROPY_CONFIG)
-    elif loss_type == "selective":
-        config.update(SELECTIVE_CONFIG)
-    elif loss_type == "hybrid":
-        config.update(HYBRID_CONFIG)
-    elif loss_type == "bandit":
-        config.update(BANDIT_CONFIG)
-
     # Override with environment variables if present
     config = _apply_environment_overrides(config)
 
@@ -167,8 +110,6 @@ def _apply_environment_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
     env_mapping = {
         "PURE_DT_LEARNING_RATE": ("learning_rate", float),
         "PURE_DT_MAX_CONTEXT_LEN": ("max_context_len", int),
-        "PURE_DT_LOSS_TYPE": ("loss_type", str),
-        "PURE_DT_TEMPERATURE": ("temperature", float),
         "PURE_DT_EMBED_DIM": ("embed_dim", int),
         "PURE_DT_NUM_LAYERS": ("num_layers", int),
         "PURE_DT_EPOCHS": ("epochs_per_training", int),
@@ -185,19 +126,14 @@ def _apply_environment_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_loss_config_summary(config: Dict[str, Any]) -> str:
-    """Get a summary of the loss configuration for logging."""
-    loss_type = config.get("loss_type", "unknown")
+    """Get a summary of the configuration for logging."""
     lr = config.get("learning_rate", "unknown")
     epochs = config.get("epochs_per_training", "unknown")
     context = config.get("max_context_len", "unknown")
 
     summary = (
-        f"Pure DT Config: loss={loss_type}, lr={lr}, epochs={epochs}, context={context}"
+        f"Pure DT Config: lr={lr}, epochs={epochs}, context={context}"
     )
-
-    if loss_type == "hybrid":
-        threshold = config.get("selective_confidence_threshold", "unknown")
-        summary += f", threshold={threshold}"
 
     return summary
 
@@ -210,7 +146,6 @@ def validate_config(config: Dict[str, Any]) -> bool:
         "num_heads",
         "learning_rate",
         "max_context_len",
-        "loss_type",
     ]
 
     for key in required_keys:
@@ -220,9 +155,6 @@ def validate_config(config: Dict[str, Any]) -> bool:
     # Validate ranges
     if config["max_context_len"] < 1:
         raise ValueError("max_context_len must be >= 1")
-
-    if config["loss_type"] not in ["cross_entropy", "selective", "hybrid", "bandit"]:
-        raise ValueError(f"Invalid loss_type: {config['loss_type']}")
 
     if config["embed_dim"] % config["num_heads"] != 0:
         raise ValueError("embed_dim must be divisible by num_heads")
@@ -235,10 +167,6 @@ __all__ = [
     "DEFAULT_DT_CONFIG",
     "CPU_PURE_DT_CONFIG",
     "GPU_PURE_DT_CONFIG",
-    "CROSS_ENTROPY_CONFIG",
-    "SELECTIVE_CONFIG",
-    "HYBRID_CONFIG",
-    "BANDIT_CONFIG",
     "load_dt_config",
     "get_loss_config_summary",
     "validate_config",
