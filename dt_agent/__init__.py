@@ -11,9 +11,6 @@ from .config import (
     get_loss_config_summary,
     validate_config,
     DEFAULT_DT_CONFIG,
-    CROSS_ENTROPY_CONFIG,
-    SELECTIVE_CONFIG,
-    HYBRID_CONFIG,
 )
 
 from .dt_agent import DTAgent
@@ -24,9 +21,6 @@ __all__ = [
     "get_loss_config_summary",
     "validate_config",
     "DEFAULT_DT_CONFIG",
-    "CROSS_ENTROPY_CONFIG",
-    "SELECTIVE_CONFIG",
-    "HYBRID_CONFIG",
-    # Model,
+    # Model
     "DTAgent",
 ]
