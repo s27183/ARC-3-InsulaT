@@ -45,12 +45,7 @@ class ViTStateEncoder(nn.Module):
     """Vision Transformer State Encoder with Learned Cell Embeddings.
 
     Encodes 64×64 grids into vector representations using patch-based
-    self-attention with learned embeddings for each cell value (0-15).
-
-    This approach is more efficient than one-hot encoding:
-    - 16x fewer values per patch (64 cells vs 1024 one-hot values)
-    - Learned color representations (like word embeddings in NLP)
-    - Standard transformer architecture philosophy
+    self-attention with learned embeddings for each cell value (0-15)
 
     Args:
         num_colors: Number of possible cell values (default: 16 for colors 0-15)
@@ -90,6 +85,7 @@ class ViTStateEncoder(nn.Module):
         # Attention-based pooling components
         self.cell_norm = nn.LayerNorm(cell_embed_dim)  # Normalize before attention
         self.attention_head = nn.Linear(cell_embed_dim, 1)  # Compute attention scores
+
         # Per-patch learnable alpha: [8, 8] grid of mixing coefficients
         # Each spatial patch position learns its own mean/attention balance
         self.alpha = nn.Parameter(torch.randn(num_patches_per_dim, num_patches_per_dim) * 0.02)
