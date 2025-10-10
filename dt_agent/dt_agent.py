@@ -473,27 +473,27 @@ class DTAgent(Agent):
         self.logger.info(f"DT Agent using device: {self.device}")
 
         # Model initialization
-        self.pure_dt_config = load_dt_config(device=str(self.device))
-        validate_config(self.pure_dt_config)
+        self.config = load_dt_config(device=str(self.device))
+        validate_config(self.config)
 
         self.pure_dt_model = DecisionTransformer(
-            embed_dim=self.pure_dt_config["embed_dim"],
-            num_layers=self.pure_dt_config["num_layers"],
-            num_heads=self.pure_dt_config["num_heads"],
-            max_context_len=self.pure_dt_config["max_context_len"],
+            embed_dim=self.config["embed_dim"],
+            num_layers=self.config["num_layers"],
+            num_heads=self.config["num_heads"],
+            max_context_len=self.config["max_context_len"],
             # ViT encoder parameters
-            vit_cell_embed_dim=self.pure_dt_config.get("vit_cell_embed_dim", 64),
-            vit_patch_size=self.pure_dt_config.get("vit_patch_size", 8),
-            vit_num_layers=self.pure_dt_config.get("vit_num_layers", 4),
-            vit_num_heads=self.pure_dt_config.get("vit_num_heads", 8),
-            vit_dropout=self.pure_dt_config.get("vit_dropout", 0.1),
-            vit_use_cls_token=self.pure_dt_config.get("vit_use_cls_token", True),
+            vit_cell_embed_dim=self.config.get("vit_cell_embed_dim", 64),
+            vit_patch_size=self.config.get("vit_patch_size", 8),
+            vit_num_layers=self.config.get("vit_num_layers", 4),
+            vit_num_heads=self.config.get("vit_num_heads", 8),
+            vit_dropout=self.config.get("vit_dropout", 0.1),
+            vit_use_cls_token=self.config.get("vit_use_cls_token", True),
         ).to(self.device)
 
         self.optimizer = torch.optim.Adam(
             self.pure_dt_model.parameters(),
-            lr=self.pure_dt_config["learning_rate"],
-            weight_decay=self.pure_dt_config["weight_decay"],
+            lr=self.config["learning_rate"],
+            weight_decay=self.config["weight_decay"],
         )
 
         # Grid info
@@ -505,9 +505,9 @@ class DTAgent(Agent):
         self.current_score = None
 
         # Experience buffer for training with uniqueness tracking
-        self.experience_buffer = deque(maxlen=self.pure_dt_config["max_buffer_size"])
+        self.experience_buffer = deque(maxlen=self.config["max_buffer_size"])
         self.hashed_experiences = set()
-        self.train_frequency = self.pure_dt_config["train_frequency"]
+        self.train_frequency = self.config["train_frequency"]
 
         # Game state and action mapping
         self.prev_frame = None
@@ -552,16 +552,16 @@ class DTAgent(Agent):
 
     def _train_dt_model(self) -> None:
         """Train the Pure Decision Transformer on collected experiences using configurable loss."""
-        if len(self.experience_buffer) < self.pure_dt_config["min_buffer_size"]:
+        if len(self.experience_buffer) < self.config["min_buffer_size"]:
             return None
 
         # Sample experiences for sequence creation
         sample_size = min(
             int(
                 len(self.experience_buffer)
-                * self.pure_dt_config["experience_sample_rate"]
+                * self.config["experience_sample_rate"]
             ),
-            self.pure_dt_config["batch_size"],
+            self.config["batch_size"],
         )
 
         # Create training sequences from experience buffer
@@ -571,49 +571,56 @@ class DTAgent(Agent):
             return None
 
         # Convert sequences to tensors
-        states_batch = torch.stack([seq["states"] for seq in sequences]).to(self.device)
+        states_batch = torch.stack([seq["states"] for seq in sequences]).to(self.device)  # [batch, k+1, 64, 64]
         actions_batch = torch.stack([seq["actions"] for seq in sequences]).to(
             self.device
-        )
-        target_actions_batch = torch.stack([seq["target_action"] for seq in sequences]).to(
-            self.device
-        )
-        change_rewards_batch = torch.stack(
-            [seq["change_reward"] for seq in sequences]
-        ).to(self.device)
-        completion_rewards_batch = torch.stack(
-            [seq["completion_reward"] for seq in sequences]
-        ).to(self.device)
+        )  # [batch, k]
+        change_reward_batch = torch.stack([seq["change_reward"] for seq in sequences]).to(self.device) # [batch, k]
+        completion_reward_batch = torch.stack(seq["completion_reward"] for seq in sequences).to(self.device) # [batch, k]
+
+        # NEW: temporal credit data
+        all_action_indices_batch = torch.stack([seq["all_action_indices"] for seq in sequences]).to(self.device)  # [batch, k+1]
+        all_change_rewards_batch = torch.stack([seq["all_change_rewards"] for seq in sequences]).to(self.device)  # [batch, k+1]
+        all_completion_rewards_batch = torch.stack([seq["all_completion_rewards"] for seq in sequences]).to(self.device)  # [batch, k+1]
 
         # Log training start info
         num_sequences = len(sequences)
-        self.logger.info(f"🎯 Starting DT training. Game: {self.game_id}. {num_sequences} sequences")
-        print(f"🎯 Starting DT training. Game: {self.game_id}. {num_sequences} sequences")
+        self.logger.info(f"🎯 Starting DT training with temporal credit. Game: {self.game_id}. {num_sequences} sequences")
+        print(f"🎯 Starting DT training with temporal credit. Game: {self.game_id}. {num_sequences} sequences")
 
         # Training loop with configurable epochs
         self.pure_dt_model.train()
         #TODO: more epochs may benefit longer sequences, but the downside is overfitting?
-        for epoch in range(self.pure_dt_config["epochs_per_training"]):
+        for epoch in range(self.config["epochs_per_training"]):
             self.optimizer.zero_grad()
 
             # Forward pass
             logits = self.pure_dt_model(states_batch, actions_batch)  # [batch, 4101]
 
-            # Compute configurable loss
-            loss, metrics = self._compute_loss(
-                change_logits=logits["change_logits"],
-                completion_logits=logits["completion_logits"],
-                target_actions=target_actions_batch,
-                change_rewards=change_rewards_batch,
-                completion_rewards=completion_rewards_batch,
-            )
+            # Compute loss with/without temporal credit assignment
+            if self.config["temporal_credit"]:
+                loss, metrics = self._compute_loss_with_temporal_credit(
+                    change_logits=logits["change_logits"],  # [batch, 4101]
+                    completion_logits=logits["completion_logits"],  # [batch, 4101]
+                    all_action_indices=all_action_indices_batch,  # [batch, k+1]
+                    all_change_rewards=all_change_rewards_batch,  # [batch, k+1]
+                    all_completion_rewards=all_completion_rewards_batch,  # [batch, k+1]
+                )
+            else:
+                loss, metrics = self._compute_loss(
+                        change_logits = logits["change_logits"], # [batch, 4101]
+                        completion_logits = logits["completion_logits"],
+                        target_actions = actions_batch,
+                        change_rewards = change_reward_batch,
+                        completion_rewards = completion_reward_batch
+                )
 
             # Gradient clipping and backward pass
             loss.backward()
-            if self.pure_dt_config["gradient_clip_norm"] > 0:
+            if self.config["gradient_clip_norm"] > 0:
                 torch.nn.utils.clip_grad_norm_(
                     self.pure_dt_model.parameters(),
-                    self.pure_dt_config["gradient_clip_norm"],
+                    self.config["gradient_clip_norm"],
                 )
             self.optimizer.step()
 
@@ -637,7 +644,7 @@ class DTAgent(Agent):
         # Adaptive context: start small, grow to max as buffer fills
         # This enables progressive training: buffer@20 → seq_len=19, buffer@100+ → seq_len=100
         context_len = min(
-            self.pure_dt_config["max_context_len"],
+            self.config["max_context_len"],
             len(self.experience_buffer) - 1  # Leave room for at least one sequence
         )
 
@@ -680,17 +687,31 @@ class DTAgent(Agent):
             change_target_reward = sequence_experiences[-1]["change_reward"]
             completion_target_reward = sequence_experiences[-1]["completion_reward"]
 
+            # NEW: Collect ALL actions and rewards for temporal credit assignment
+            all_action_indices = []
+            all_change_rewards = []
+            all_completion_rewards = []
+
+            for exp in sequence_experiences:
+                all_action_indices.append(exp["action_idx"])
+                all_change_rewards.append(exp["change_reward"])  # 1.0 or 0.0
+                all_completion_rewards.append(exp["completion_reward"])  # 1.0 or 0.0
+
             sequences.append(
                 {
-                    "states": states,
-                    "actions": actions,
-                    "target_action": torch.tensor(target_action, dtype=torch.long),
+                    "states": states,  # [k+1, 64, 64]
+                    "actions": actions,  # [k]
+                    "target_action": torch.tensor(target_action, dtype=torch.long), # int
                     "change_reward": torch.tensor(
                         change_target_reward, dtype=torch.float32
-                    ),
+                    ), # 1.0 or 0.0
                     "completion_reward": torch.tensor(
                         completion_target_reward, dtype=torch.float32
-                    ),
+                    ), # 1.0 or 0.0
+                    # temporal credit data
+                    "all_action_indices": torch.tensor(all_action_indices, dtype=torch.long),  # [k+1]
+                    "all_change_rewards": torch.tensor(all_change_rewards, dtype=torch.float32),  # [k+1]
+                    "all_completion_rewards": torch.tensor(all_completion_rewards, dtype=torch.float32),  # [k+1]
                 }
             )
 
@@ -757,8 +778,8 @@ class DTAgent(Agent):
         coord_diversity = (change_coord_diversity + completion_coord_diversity) / 2
 
         # Diversity coefficients (configurable)
-        action_coeff = self.pure_dt_config.get("action_entropy_coeff", 0.0001)
-        coord_coeff = self.pure_dt_config.get("coord_entropy_coeff", 0.00001)
+        action_coeff = self.config.get("action_entropy_coeff", 0.0001)
+        coord_coeff = self.config.get("coord_entropy_coeff", 0.00001)
 
         # Total loss with diversity regularization
         # Subtracting encourages higher mean probability = more action diversity
@@ -784,6 +805,143 @@ class DTAgent(Agent):
             "total_loss": loss.item(),
         }
 
+
+        return loss, metrics
+
+    def _compute_loss_with_temporal_credit(
+        self,
+        change_logits: torch.Tensor,
+        completion_logits: torch.Tensor,
+        all_action_indices: torch.Tensor,
+        all_change_rewards: torch.Tensor,
+        all_completion_rewards: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        """
+        Compute loss with temporal credit assignment.
+
+        Uses gather() multiple times to update ALL actions in sequence with
+        exponentially decaying weights (eligibility traces).
+
+        Args:
+            change_logits: [batch, 4101] - predicted logits for frame change
+            completion_logits: [batch, 4101] - predicted logits for level completion
+            all_action_indices: [batch, seq_len] - ALL actions in sequence
+            all_change_rewards: [batch, seq_len] - 1.0 (productive) or 0.0 (wasteful)
+            all_completion_rewards: [batch, seq_len] - 1.0 (goal) or 0.0
+
+        Returns:
+            loss: weighted temporal credit loss
+            metrics: dict with training metrics
+        """
+        batch_size = change_logits.shape[0]  # B
+        seq_len = all_action_indices.shape[1]  # k+1 (e.g., 15)
+
+        # Get eligibility decay parameter
+        eligibility_decay = self.config.get("eligibility_decay", 0.8)
+
+        # Accumulate weighted losses
+        total_change_loss = 0.0
+        total_completion_loss = 0.0
+        total_weight = 0.0
+
+        # Loop through sequence - gather() for each action
+        for t in range(seq_len):
+            # Compute eligibility weight (exponential decay from end)
+            # Most recent: decay^0 = 1.0
+            # One step back: decay^1 = 0.8
+            # Two steps back: decay^2 = 0.64
+            steps_from_end = seq_len - 1 - t
+            time_weight = eligibility_decay ** steps_from_end
+
+            # Get action at timestep t
+            action_t = all_action_indices[:, t]  # [batch]
+
+            # Use gather() to select logits for THIS action (Hebbian!)
+            # This is the same gather() as current implementation,
+            # just called multiple times instead of once
+            selected_change_logits_t = change_logits.gather(
+                dim=1, index=action_t.unsqueeze(1)
+            ).squeeze(1)  # [batch]
+
+            selected_completion_logits_t = completion_logits.gather(
+                dim=1, index=action_t.unsqueeze(1)
+            ).squeeze(1)  # [batch]
+
+            # Get rewards for this action
+            change_reward_t = all_change_rewards[:, t]  # [batch]
+            completion_reward_t = all_completion_rewards[:, t]  # [batch]
+
+            # Compute BCE loss for this action
+            change_loss_t = F.binary_cross_entropy_with_logits(
+                selected_change_logits_t,
+                change_reward_t,
+                reduction='none'
+            )  # [batch]
+
+            completion_loss_t = F.binary_cross_entropy_with_logits(
+                selected_completion_logits_t,
+                completion_reward_t,
+                reduction='none'
+            )  # [batch]
+
+            # Accumulate with temporal weight
+            total_change_loss += (change_loss_t * time_weight).sum()
+            total_completion_loss += (completion_loss_t * time_weight).sum()
+            total_weight += time_weight * batch_size
+
+        # Normalize by cumulative weight
+        change_loss = total_change_loss / total_weight
+        completion_loss = total_completion_loss / total_weight
+
+        # Add diversity regularization (same as existing _compute_loss)
+        change_probs = torch.sigmoid(change_logits)
+        completion_probs = torch.sigmoid(completion_logits)
+
+        change_action_probs = change_probs[:, :5]
+        change_coord_probs = change_probs[:, 5:]
+        completion_action_probs = completion_probs[:, :5]
+        completion_coord_probs = completion_probs[:, 5:]
+
+        change_action_diversity = change_action_probs.mean(dim=1).mean(dim=0)
+        change_coord_diversity = change_coord_probs.mean(dim=1).mean(dim=0)
+        completion_action_diversity = completion_action_probs.mean(dim=1).mean(dim=0)
+        completion_coord_diversity = completion_coord_probs.mean(dim=1).mean(dim=0)
+
+        action_diversity = (change_action_diversity + completion_action_diversity) / 2
+        coord_diversity = (change_coord_diversity + completion_coord_diversity) / 2
+
+        action_coeff = self.config.get("action_entropy_coeff", 0.0001)
+        coord_coeff = self.config.get("coord_entropy_coeff", 0.00001)
+
+        loss = (
+            change_loss + completion_loss
+            - action_coeff * action_diversity
+            - coord_coeff * coord_diversity
+        )
+
+        # Calculate accuracy on most recent action (for monitoring)
+        most_recent_action = all_action_indices[:, -1]
+        selected_change_logits_final = change_logits.gather(
+            dim=1, index=most_recent_action.unsqueeze(1)
+        ).squeeze(1)
+        selected_completion_logits_final = completion_logits.gather(
+            dim=1, index=most_recent_action.unsqueeze(1)
+        ).squeeze(1)
+
+        change_accuracy = (torch.sigmoid(selected_change_logits_final) > 0.5) == all_change_rewards[:, -1]
+        completion_accuracy = (torch.sigmoid(selected_completion_logits_final) > 0.5) == all_completion_rewards[:, -1]
+        accuracy = (change_accuracy & completion_accuracy).float().mean()
+
+        metrics = {
+            "accuracy": accuracy.item(),
+            "change_loss": change_loss.item(),
+            "completion_loss": completion_loss.item(),
+            "action_diversity": action_diversity.item(),
+            "coord_diversity": coord_diversity.item(),
+            "total_loss": loss.item(),
+            "avg_sequence_length": seq_len,
+            "eligibility_decay": eligibility_decay,
+        }
 
         return loss, metrics
 
@@ -905,14 +1063,14 @@ class DTAgent(Agent):
         # Train DT model at regular frequency
         if self.action_counter % self.train_frequency == 0:
             buffer_size = len(self.experience_buffer)
-            if buffer_size >= self.pure_dt_config["min_buffer_size"]:
+            if buffer_size >= self.config["min_buffer_size"]:
                 self.logger.info(
                     f"🤖 Training DT model. Game: {self.game_id} with (buffer size: {buffer_size})"
                 )
                 self._train_dt_model()
             else:
                 self.logger.debug(
-                    f"Skipping training: buffer size {buffer_size} < min_buffer_size {self.pure_dt_config['min_buffer_size']}"
+                    f"Skipping training: buffer size {buffer_size} < min_buffer_size {self.config['min_buffer_size']}"
                 )
 
 
@@ -981,7 +1139,7 @@ class DTAgent(Agent):
         self.pure_dt_model.eval()
         with torch.no_grad():
             # Build state-action sequence and get logits
-            max_context_len = self.pure_dt_config["max_context_len"]
+            max_context_len = self.config["max_context_len"]
 
             # Cold start - random valid action if no experience
             if len(self.experience_buffer) < 1:
