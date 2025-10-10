@@ -477,7 +477,7 @@ class DTAgent(Agent):
 
         # Experience buffer for training with uniqueness tracking
         self.experience_buffer = deque(maxlen=self.pure_dt_config["max_buffer_size"])
-        self.experience_hashes = set()
+        self.hashed_experiences = set()
         self.train_frequency = self.pure_dt_config["train_frequency"]
 
         # Game state and action mapping
@@ -829,7 +829,7 @@ class DTAgent(Agent):
         # Reset when the game state is either NOT_PLAYED or GAME_OVER
         if latest_frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
             self.experience_buffer.clear()
-            self.experience_hashes.clear()
+            self.hashed_experiences.clear()
             self.prev_frame = None
             self.prev_action_idx = None
             self.current_score = None
@@ -899,7 +899,7 @@ class DTAgent(Agent):
 
             # Clear experience buffer when reaching new level
             self.experience_buffer.clear()
-            self.experience_hashes.clear()
+            self.hashed_experiences.clear()
             self.logger.info("Cleared experience buffer - new level reached")
 
             # Reset previous tracking
@@ -913,12 +913,12 @@ class DTAgent(Agent):
     def _store_experience(self, current_frame: torch.Tensor, current_score: int):
         if self.prev_frame is not None:
             # Compute hash for uniqueness check
-            experience_hash = self._hash_experience(
+            hashed_experience = self._hash_experience(
                 self.prev_frame, self.prev_action_idx
             )
 
             # Only store if unique
-            if experience_hash not in self.experience_hashes:
+            if hashed_experience not in self.hashed_experiences:
                 # Convert current frame to numpy int64 for comparison
                 latest_frame_np = current_frame.cpu().numpy().astype(np.int64)
                 frame_changed = not np.array_equal(self.prev_frame, latest_frame_np)
@@ -931,7 +931,7 @@ class DTAgent(Agent):
                     "completion_reward": 1.0 if level_completion else 0.0,
                 }
                 self.experience_buffer.append(experience)
-                self.experience_hashes.add(experience_hash)
+                self.hashed_experiences.add(hashed_experience)
 
                 # Log replay buffer size periodically
                 self.writer.add_scalar(
@@ -941,7 +941,7 @@ class DTAgent(Agent):
                 )
                 self.writer.add_scalar(
                     "DTAgent/replay_unique_hashes",
-                    len(self.experience_hashes),
+                    len(self.hashed_experiences),
                     self.action_counter,
                 )
 
