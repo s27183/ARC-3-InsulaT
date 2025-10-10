@@ -80,17 +80,24 @@ class ViTStateEncoder(nn.Module):
         self.cell_embed_dim = cell_embed_dim
         self.patch_size = patch_size
         self.grid_size = 64
-        self.num_patches = (self.grid_size // patch_size) ** 2  # 64 patches for 8×8
+        num_patches_per_dim = self.grid_size // patch_size  # 8
+        self.num_patches = num_patches_per_dim ** 2  # 64 patches for 8×8
         self.use_cls_token = use_cls_token
 
         # Learned cell embedding: each color (0-15) → vector
         self.cell_embedding = nn.Embedding(num_colors, cell_embed_dim)
 
+        # Attention-based pooling components
+        self.cell_norm = nn.LayerNorm(cell_embed_dim)  # Normalize before attention
+        self.attention_head = nn.Linear(cell_embed_dim, 1)  # Compute attention scores
+        # Per-patch learnable alpha: [8, 8] grid of mixing coefficients
+        # Each spatial patch position learns its own mean/attention balance
+        self.alpha = nn.Parameter(torch.randn(num_patches_per_dim, num_patches_per_dim) * 0.02)
+
         # Patch projection: aggregated cell embeddings → transformer dimension
         self.patch_projection = nn.Linear(cell_embed_dim, embed_dim)
 
         # 2D learnable positional embeddings for patch grid
-        num_patches_per_dim = self.grid_size // patch_size  # 8
         self.pos_embed = nn.Parameter(
             torch.randn(1, num_patches_per_dim, num_patches_per_dim, embed_dim) * 0.02
         )
@@ -142,7 +149,7 @@ class ViTStateEncoder(nn.Module):
         return patches
 
     def _embed_and_aggregate_patches(self, patches: torch.Tensor) -> torch.Tensor:
-        """Embed each cell and aggregate within patches.
+        """Embed each cell and aggregate within patches using LayerNorm + Attention + Residual.
 
         Args:
             patches: [batch, 8, 8, 64] - Integer cell values 0-15
@@ -154,9 +161,33 @@ class ViTStateEncoder(nn.Module):
         # Ensure integer type for embedding lookup
         cell_embeddings = self.cell_embedding(patches.long())
 
-        # Aggregate within each patch (mean pooling)
-        # [batch, 8, 8, cell_embed_dim]
-        patch_embeddings = cell_embeddings.mean(dim=3)
+        # LayerNorm for stable attention computation
+        # Shape: [batch, 8, 8, 64, cell_embed_dim]
+        normed_embeddings = self.cell_norm(cell_embeddings)
+
+        # Compute attention scores on normalized features
+        # Shape: [batch, 8, 8, 64, 1]
+        attention_scores = self.attention_head(normed_embeddings)
+
+        # Softmax over cells within each patch (dim=3)
+        # Shape: [batch, 8, 8, 64, 1]
+        attention_weights = F.softmax(attention_scores, dim=3)
+
+        # Weighted sum using original (unnormalized) embeddings
+        # Shape: [batch, 8, 8, cell_embed_dim]
+        attended = (attention_weights * cell_embeddings).sum(dim=3)
+
+        # Mean pooling (baseline/residual path)
+        # Shape: [batch, 8, 8, cell_embed_dim]
+        mean_pooled = cell_embeddings.mean(dim=3)
+
+        # Per-patch learnable combination with sigmoid to bound alpha ∈ [0,1]
+        # alpha shape: [8, 8] → broadcast to [1, 8, 8, 1]
+        alpha = torch.sigmoid(self.alpha).unsqueeze(0).unsqueeze(-1)
+
+        # Residual combination: (1-alpha)*mean + alpha*attended
+        # Shape: [batch, 8, 8, cell_embed_dim]
+        patch_embeddings = (1 - alpha) * mean_pooled + alpha * attended
 
         return patch_embeddings
 
