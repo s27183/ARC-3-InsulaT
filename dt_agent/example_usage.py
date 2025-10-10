@@ -31,9 +31,9 @@ def run_pure_dt_agent_example():
         print(f"✅ Pure DT Agent initialized successfully!")
         print(f"   - Device: {agent.device}")
         print(f"   - Model: {agent.pure_dt_model.__class__.__name__}")
-        print(f"   - Configuration: {agent.pure_dt_config['loss_type']} loss")
-        print(f"   - Context length: {agent.pure_dt_config['context_length']}")
-        print(f"   - Temperature: {agent.pure_dt_config['temperature']}")
+        print(f"   - Configuration: {agent.config['loss_type']} loss")
+        print(f"   - Context length: {agent.config['context_length']}")
+        print(f"   - Temperature: {agent.config['temperature']}")
 
         # Example configuration customization
         print("\n🔧 Configuration options:")
