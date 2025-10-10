@@ -15,7 +15,7 @@ DEFAULT_DT_CONFIG = {
     "embed_dim": 256,  # Transformer embedding dimension
     "num_layers": 4,  # Number of transformer layers
     "num_heads": 8,  # Number of attention heads
-    "max_context_len": 100,  # Context window for sequences (training and inference)
+    "max_context_len": 15,  # Context window for sequences (training and inference)
 
     # Training Parameters
     "learning_rate": 1e-4,  # Adam learning rate
@@ -27,12 +27,17 @@ DEFAULT_DT_CONFIG = {
     "action_entropy_coeff": 0.0001,  # Entropy coefficient for discrete actions
     "coord_entropy_coeff": 0.00001,  # Entropy coefficient for coordinates
 
+    # Temporal Credit Assignment
+    # TODO: experiment with/without temporal credit and with different decay rates to do A/B test
+    "temporal_credit": True, # Backward temporal credit assignment in a state/action sequence
+    "eligibility_decay": 0.8,  # Exponential decay for temporal credit (0.8 = moderate decay, 1.0 = no temporal credit)
+
     # Experience Management
     "max_buffer_size": 200000,  # Maximum experience buffer size
     "experience_sample_rate": 1.0,  # Fraction of experiences to use for training
 
     # Training Schedule
-    "batch_size": 16,  # Batch size for training (reduced to fit longer context)
+    "batch_size": 16,  # Batch size for training
     "epochs_per_training": 1,  # Number of epochs per training session
     "gradient_clip_norm": 1.0,  # Gradient clipping norm
 
