@@ -476,8 +476,6 @@ class DTAgent(Agent):
         self.pure_dt_config = load_dt_config(device=str(self.device))
         validate_config(self.pure_dt_config)
 
-        config_summary = get_loss_config_summary(self.pure_dt_config)
-
         self.pure_dt_model = DecisionTransformer(
             embed_dim=self.pure_dt_config["embed_dim"],
             num_layers=self.pure_dt_config["num_layers"],
