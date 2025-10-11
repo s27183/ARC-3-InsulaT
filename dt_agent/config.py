@@ -15,7 +15,7 @@ DEFAULT_DT_CONFIG = {
     "embed_dim": 256,  # Transformer embedding dimension
     "num_layers": 4,  # Number of transformer layers
     "num_heads": 8,  # Number of attention heads
-    "max_context_len": 15,  # Context window for sequences (training and inference)
+    "max_context_len": 300,  # Maximum positional embedding capacity (must be >= longest head-specific context)
 
     # Training Parameters
     "learning_rate": 1e-4,  # Adam learning rate
@@ -31,6 +31,25 @@ DEFAULT_DT_CONFIG = {
     # TODO: experiment with/without temporal credit and with different decay rates to do A/B test
     "temporal_credit": True, # Backward temporal credit assignment in a state/action sequence
     "eligibility_decay": 0.8,  # Exponential decay for temporal credit (0.8 = moderate decay, 1.0 = no temporal credit)
+
+    # Hierarchical Context Windows (Head-Specific)
+    "change_context_len": 15,  # Context length for change head (immediate effects)
+    "completion_context_len": 100,  # Context length for completion head (goal sequences)
+    "gameover_context_len": 300,  # Context length for GAME_OVER head (failure causal chains)
+
+    # Head-Specific Eligibility Decay (for temporal credit assignment)
+    "change_eligibility_decay": 0.7,  # Fast decay for immediate effects
+    "completion_eligibility_decay": 0.8,  # Medium decay for goal-oriented actions
+    "gameover_eligibility_decay": 0.9,  # Slow decay for long causal chains
+
+    # Importance-Weighted Replay (Head-Specific Replay Sizes)
+    "change_replay_size": 16,  # Number of change sequences per training round
+    "completion_replay_size": 80,  # Number of completion sequences per training round
+    "gameover_replay_size": 160,  # Number of GAME_OVER sequences per training round
+
+    # Replay Variation (for completion and GAME_OVER sequences)
+    "replay_variation_min": 0.8,  # Minimum variation factor (80% of target length)
+    "replay_variation_max": 1.0,  # Maximum variation factor (100% of target length)
 
     # Experience Management
     "max_buffer_size": 200000,  # Maximum experience buffer size
@@ -55,26 +74,42 @@ CPU_PURE_DT_CONFIG = {
     **DEFAULT_DT_CONFIG,
     "embed_dim": 128,  # Smaller model for CPU
     "num_layers": 2,  # Fewer layers for CPU
-    "max_context_len": 20,  # Shorter context for CPU
+    "max_context_len": 150,  # Must accommodate gameover_context_len
     "batch_size": 16,  # Smaller batch for CPU
     # ViT configuration for CPU
     "vit_num_layers": 2,  # Fewer ViT layers for CPU
     "vit_num_heads": 4,  # Fewer attention heads for CPU (128/4 = 32)
     "vit_patch_size": 8,  # Keep patch size same
     "vit_cell_embed_dim": 32,  # Smaller cell embeddings for CPU
+    # Hierarchical context for CPU (shorter windows)
+    "change_context_len": 10,
+    "completion_context_len": 50,
+    "gameover_context_len": 150,
+    # Smaller replay sizes for CPU
+    "change_replay_size": 8,
+    "completion_replay_size": 40,
+    "gameover_replay_size": 80,
 }
 
 GPU_PURE_DT_CONFIG = {
     **DEFAULT_DT_CONFIG,
     "embed_dim": 512,  # Larger model for GPU
     "num_layers": 6,  # More layers for GPU
-    "max_context_len": 100,  # Longer context for GPU (10% of typical 1000-move game)
+    "max_context_len": 400,  # Must accommodate gameover_context_len
     "batch_size": 16,  # Smaller batch to fit longer context in memory
     # ViT configuration for GPU
     "vit_num_layers": 6,  # More ViT layers for GPU
     "vit_num_heads": 16,  # More attention heads for GPU (512/16 = 32)
     "vit_patch_size": 8,  # Keep patch size same
     "vit_cell_embed_dim": 128,  # Larger cell embeddings for GPU
+    # Hierarchical context for GPU (longer windows for better performance)
+    "change_context_len": 20,
+    "completion_context_len": 150,
+    "gameover_context_len": 400,
+    # Larger replay sizes for GPU
+    "change_replay_size": 32,
+    "completion_replay_size": 160,
+    "gameover_replay_size": 320,
 }
 
 
@@ -163,6 +198,25 @@ def validate_config(config: Dict[str, Any]) -> bool:
 
     if config["embed_dim"] % config["num_heads"] != 0:
         raise ValueError("embed_dim must be divisible by num_heads")
+
+    # Validate hierarchical context lengths respect max_context_len constraint
+    max_context = config["max_context_len"]
+    change_context = config.get("change_context_len", 0)
+    completion_context = config.get("completion_context_len", 0)
+    gameover_context = config.get("gameover_context_len", 0)
+
+    if change_context > max_context:
+        raise ValueError(
+            f"change_context_len ({change_context}) exceeds max_context_len ({max_context})"
+        )
+    if completion_context > max_context:
+        raise ValueError(
+            f"completion_context_len ({completion_context}) exceeds max_context_len ({max_context})"
+        )
+    if gameover_context > max_context:
+        raise ValueError(
+            f"gameover_context_len ({gameover_context}) exceeds max_context_len ({max_context})"
+        )
 
     return True
 
