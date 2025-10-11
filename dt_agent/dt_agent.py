@@ -43,7 +43,7 @@ from agents.structs import FrameData, GameAction, GameState
 
 from dt_agent.config import load_dt_config, validate_config
 from dt_agent.models import DecisionTransformer
-from dt_agent.trainer import train_dt_model
+from dt_agent.trainer import train_model
 from dt_agent.utils import setup_logging
 
 
@@ -227,7 +227,7 @@ class DTAgent(Agent):
                 self.logger.info(
                     f"🤖 Training DT model. Game: {self.game_id} with (buffer size: {buffer_size})"
                 )
-                train_dt_model(
+                train_model(
                     model=self.pure_dt_model,
                     optimizer=self.optimizer,
                     experience_buffer=self.experience_buffer,
@@ -391,7 +391,7 @@ class DTAgent(Agent):
                 gameover_logits = logits["gameover_logits"].squeeze(0)  # [4101]
 
                 # Sample from combined action space (multiplicative combination with three heads)
-                action_idx, coords, coord_idx = self._sample_from_combined_output(
+                action_idx, coords, coord_idx = self._sample_action(
                     change_logits, completion_logits, gameover_logits, latest_frame.available_actions
                 )
 
@@ -412,7 +412,7 @@ class DTAgent(Agent):
 
         return action_idx, coord_idx, selected_action
 
-    def _sample_from_combined_output(
+    def _sample_action(
         self,
         change_logits: torch.Tensor,
         completion_logits: torch.Tensor,
