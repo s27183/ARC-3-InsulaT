@@ -128,6 +128,7 @@ class DTAgent(Agent):
         # Game state and action mapping
         self.prev_frame = None
         self.prev_action_idx = None
+        self.win_counter = 0
 
         self.action_list = [
             GameAction.ACTION1,
@@ -182,6 +183,11 @@ class DTAgent(Agent):
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
         """Decide if the agent is done playing or not."""
+
+        # Keep track of the number of wins
+        if latest_frame.state is GameState.WIN:
+            self.win_counter += 1
+
         return any(
             [
                 latest_frame.state is GameState.WIN,
@@ -268,7 +274,7 @@ class DTAgent(Agent):
             )
             return action
 
-        # If no reset and error, get action predictions from DT model (following bandit pattern exactly)
+        # If no reset and no error, get action predictions from DT model (following bandit pattern exactly)
         action_idx, coord_idx, selected_action = self.select_action(
             latest_frame_torch=current_frame, latest_frame=latest_frame
         )
@@ -301,6 +307,7 @@ class DTAgent(Agent):
         # Check if score has changed and log score at action count
 
         if latest_frame.score != self.current_score:
+            self.logger.info(f"Score changed from {self.current_score} to {latest_frame.score} for game {self.game_id} at action {self.action_counter}")
             self.logger.info(f"Game {self.game_id} reached level {latest_frame.score} at action {self.action_counter}")
 
             # Clear experience buffer when reaching new level
