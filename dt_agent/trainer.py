@@ -1,8 +1,6 @@
 """
-Training logic for Decision Transformer with hierarchical context windows.
-
-This module contains all training-related functions extracted from DTAgent class
-for better code organization and maintainability.
+This module contains all training-related functions for the
+Decision Transformer with hierarchical context windows.
 """
 
 import torch
