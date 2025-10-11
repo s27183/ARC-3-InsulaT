@@ -43,7 +43,7 @@ DEFAULT_DT_CONFIG = {
     "gameover_eligibility_decay": 0.9,  # Slow decay for long causal chains
 
     # Importance-Weighted Replay (Head-Specific Replay Sizes)
-    "change_replay_size": 16,  # Number of change sequences per training round
+    "change_replay_size": 32,  # Number of change sequences per training round
     "completion_replay_size": 320,  # Number of completion sequences per training round
     "gameover_replay_size": 320,  # Number of GAME_OVER sequences per training round
 
