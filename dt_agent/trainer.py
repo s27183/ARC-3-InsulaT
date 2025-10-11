@@ -486,7 +486,7 @@ def train_head_batch(
     return loss, metrics
 
 
-def train_dt_model(
+def train_model(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     experience_buffer: deque,
