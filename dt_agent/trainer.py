@@ -3,13 +3,15 @@ This module contains all training-related functions for the
 Decision Transformer with hierarchical context windows.
 """
 
-import torch
-import torch.nn.functional as F
 from typing import Any
 import random
 from collections import deque, defaultdict
 import logging
+
+import torch
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
+import numpy as np
 
 
 # ============================================================================
@@ -167,21 +169,21 @@ def create_completion_sequences(
     variation_max = config["replay_variation_max"]
 
     # Find all completion events in buffer
-    completion_indices = [
+    completion_idx = [
         i for i, exp in enumerate(experience_buffer)
         if exp["completion_reward"] == 1.0
     ]
 
-    if not completion_indices:
+    if not completion_idx:
         return []  # No completion events yet
 
     # Determine sampling strategy: WITH or WITHOUT replacement
-    if len(completion_indices) < replay_size:
+    if len(completion_idx) < replay_size:
         # SPARSE: Sample WITH replacement (oversample)
-        sampled_indices = random.choices(completion_indices, k=replay_size)
+        sampled_indices = np.random.choice(completion_idx, size=replay_size, replace=True)
     else:
         # ABUNDANT: Sample WITHOUT replacement (subsample)
-        sampled_indices = random.sample(completion_indices, k=replay_size)
+        sampled_indices = np.random.choice(completion_idx, size=replay_size, replace=False)
 
     sequences = []
     for completion_idx in sampled_indices:
@@ -222,21 +224,21 @@ def create_gameover_sequences(
     variation_max = config["replay_variation_max"]
 
     # Find all GAME_OVER events in buffer (gameover_reward == 0.0 means GAME_OVER occurred)
-    gameover_indices = [
+    gameover_idx = [
         i for i, exp in enumerate(experience_buffer)
         if exp["gameover_reward"] == 0.0
     ]
 
-    if not gameover_indices:
+    if not gameover_idx:
         return []  # No GAME_OVER events yet
 
     # Determine sampling strategy: WITH or WITHOUT replacement
-    if len(gameover_indices) < replay_size:
+    if len(gameover_idx) < replay_size:
         # SPARSE: Sample WITH replacement (oversample)
-        sampled_indices = random.choices(gameover_indices, k=replay_size)
+        sampled_indices = np.random.choice(gameover_idx, size=replay_size, replace=True)
     else:
         # ABUNDANT: Sample WITHOUT replacement (subsample)
-        sampled_indices = random.sample(gameover_indices, k=replay_size)
+        sampled_indices = np.random.choice(gameover_idx, size=replay_size, replace=False)
 
     sequences = []
     for gameover_idx in sampled_indices:
