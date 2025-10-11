@@ -33,9 +33,9 @@ DEFAULT_DT_CONFIG = {
     "eligibility_decay": 0.8,  # Exponential decay for temporal credit (0.8 = moderate decay, 1.0 = no temporal credit)
 
     # Hierarchical Context Windows (Head-Specific)
-    "change_context_len": 15,  # Context length for change head (immediate effects)
-    "completion_context_len": 100,  # Context length for completion head (goal sequences)
-    "gameover_context_len": 300,  # Context length for GAME_OVER head (failure causal chains)
+    "change_context_len": 5,  # Context length for change head (immediate effects)
+    "completion_context_len": 50,  # Context length for completion head (goal sequences)
+    "gameover_context_len": 200,  # Context length for GAME_OVER head (failure causal chains)
 
     # Head-Specific Eligibility Decay (for temporal credit assignment)
     "change_eligibility_decay": 0.7,  # Fast decay for immediate effects
@@ -44,8 +44,8 @@ DEFAULT_DT_CONFIG = {
 
     # Importance-Weighted Replay (Head-Specific Replay Sizes)
     "change_replay_size": 16,  # Number of change sequences per training round
-    "completion_replay_size": 80,  # Number of completion sequences per training round
-    "gameover_replay_size": 160,  # Number of GAME_OVER sequences per training round
+    "completion_replay_size": 320,  # Number of completion sequences per training round
+    "gameover_replay_size": 320,  # Number of GAME_OVER sequences per training round
 
     # Replay Variation (for completion and GAME_OVER sequences)
     "replay_variation_min": 0.8,  # Minimum variation factor (80% of target length)
