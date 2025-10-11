@@ -30,7 +30,6 @@ from typing import Any
 import random
 import time
 import logging
-import hashlib
 from collections import deque
 from pathlib import Path
 
@@ -53,9 +52,9 @@ class DTAgent(Agent):
     This agent uses a unified transformer architecture for direct action prediction.
 
     Features:
-    - State-action sequence modeling with local context
+    - State-action sequence modeling with temporal context
     - Temperature-based exploration with action masking
-    - Experience buffer with uniqueness tracking
+    - Experience buffer preserving temporal order
     - Integrated logging
     - Full Agent interface compatibility
     """
@@ -120,9 +119,8 @@ class DTAgent(Agent):
         # Scores as level indicators
         self.current_score = 0
 
-        # Experience buffer for training with uniqueness tracking
+        # Experience buffer for training
         self.experience_buffer = deque(maxlen=self.config["max_buffer_size"])
-        self.hashed_experiences = set()
         self.train_frequency = self.config["train_frequency"]
 
         # Game state and action mapping
@@ -164,17 +162,6 @@ class DTAgent(Agent):
 
         return tensor
 
-    def _hash_experience(self, frame: np.ndarray, action_idx: int) -> str:
-        """Compute hash for frame+action combination using BLAKE2b.
-
-        Input: frame shape [64, 64] + action_idx (int)
-        Output: 64-character hex string (512-bit hash)
-        """
-        assert frame.shape == (self.grid_size, self.grid_size)
-
-        # Combine frame bytes and action
-        hash_input = frame.tobytes() + str(action_idx).encode("utf-8")
-        return hashlib.blake2b(hash_input).hexdigest()
 
     def _has_time_elapsed(self) -> bool:
         """Check if 8 hours have elapsed since start."""
@@ -211,12 +198,12 @@ class DTAgent(Agent):
         # Reset when the game when it's initilized
         if latest_frame.state == GameState.NOT_PLAYED:
             self.experience_buffer.clear()
-            self.hashed_experiences.clear()
             self.prev_frame = None
             self.prev_action_idx = None
             self.current_score = 0
             action = GameAction.RESET
-            action.reasoning = "Game needs reset due to NOT_PLAYED or GAME_OVER"
+            action.reasoning = "Game needs reset due to NOT_PLAYED"
+            self.logger.info(f"Game {self.game_id} is initialized")
             return action
 
         # Convert current frame to torch tensor
@@ -255,17 +242,17 @@ class DTAgent(Agent):
         # Reset when the game state is GAME_OVER
         if latest_frame.state == GameState.GAME_OVER:
             self.experience_buffer.clear()
-            self.hashed_experiences.clear()
             self.prev_frame = None
             self.prev_action_idx = None
             self.current_score = 0
             action = GameAction.RESET
-            action.reasoning = "Game needs reset due to NOT_PLAYED or GAME_OVER"
+            action.reasoning = "Game needs reset due to GAME_OVER"
+            self.logger.info(f"Game {self.game_id} is reset. Current score: {self.current_score}")
             return action
 
-        # If frame processing failed, reset tracking and return random action
+        # If frame processing failed, reset tracking and return a random action
         if current_frame is None:
-            print("Error detected in converting latest frame to tensor!")
+            self.logger.info(f"Error in frame processing for Game {self.game_id}. Use randome action selection")
             self.prev_frame = None
             self.prev_action_idx = None
             action = random.choice(self.action_list[:5])  # Random ACTION1-ACTION5
@@ -312,7 +299,6 @@ class DTAgent(Agent):
 
             # Clear experience buffer when reaching new level
             self.experience_buffer.clear()
-            self.hashed_experiences.clear()
             self.prev_frame = None
             self.prev_action_idx = None
             self.current_score = latest_frame.score
@@ -322,42 +308,29 @@ class DTAgent(Agent):
 
     def _store_experience(self, current_frame: torch.Tensor, latest_frame: FrameData):
         if self.prev_frame is not None:
-            # Compute hash for uniqueness check
-            hashed_experience = self._hash_experience(
-                self.prev_frame, self.prev_action_idx
+            # Convert current frame to numpy int64 for comparison
+            latest_frame_np = current_frame.cpu().numpy().astype(np.int64)
+            frame_changed = not np.array_equal(self.prev_frame, latest_frame_np)
+            level_completion = latest_frame.score != self.current_score
+            # Inverted GAME_OVER: 1.0 = survived (good), 0.0 = GAME_OVER (bad)
+            game_over_occurred = latest_frame.state == GameState.GAME_OVER
+            gameover_reward = 0.0 if game_over_occurred else 1.0
+
+            experience = {
+                "state": self.prev_frame,  # Integer grid [64, 64]
+                "action_idx": self.prev_action_idx,  # Unified action index
+                "change_reward": 1.0 if frame_changed else 0.0,
+                "completion_reward": 1.0 if level_completion else 0.0,
+                "gameover_reward": gameover_reward,  # 1.0 = survived, 0.0 = died
+            }
+            self.experience_buffer.append(experience)
+
+            # Log replay buffer size periodically
+            self.writer.add_scalar(
+                "DTAgent/replay_buffer_size",
+                len(self.experience_buffer),
+                self.action_counter,
             )
-
-            # Only store if unique
-            if hashed_experience not in self.hashed_experiences:
-                # Convert current frame to numpy int64 for comparison
-                latest_frame_np = current_frame.cpu().numpy().astype(np.int64)
-                frame_changed = not np.array_equal(self.prev_frame, latest_frame_np)
-                level_completion = latest_frame.score != self.current_score
-                # Inverted GAME_OVER: 1.0 = survived (good), 0.0 = GAME_OVER (bad)
-                game_over_occurred = latest_frame.state == GameState.GAME_OVER
-                gameover_reward = 0.0 if game_over_occurred else 1.0
-
-                experience = {
-                    "state": self.prev_frame,  # Integer grid [64, 64]
-                    "action_idx": self.prev_action_idx,  # Unified action index
-                    "change_reward": 1.0 if frame_changed else 0.0,
-                    "completion_reward": 1.0 if level_completion else 0.0,
-                    "gameover_reward": gameover_reward,  # 1.0 = survived, 0.0 = died
-                }
-                self.experience_buffer.append(experience)
-                self.hashed_experiences.add(hashed_experience)
-
-                # Log replay buffer size periodically
-                self.writer.add_scalar(
-                    "DTAgent/replay_buffer_size",
-                    len(self.experience_buffer),
-                    self.action_counter,
-                )
-                self.writer.add_scalar(
-                    "DTAgent/replay_unique_hashes",
-                    len(self.hashed_experiences),
-                    self.action_counter,
-                )
 
     def select_action(
         self, latest_frame_torch: torch.Tensor, latest_frame: FrameData
