@@ -6,14 +6,14 @@ The Pure DT replaces the hybrid bandit-DT architecture with a unified transforme
 approach for direct action prediction.
 """
 
-from .config import (
+from dt_agent.config import (
     load_dt_config,
     get_loss_config_summary,
     validate_config,
     DEFAULT_DT_CONFIG,
 )
 
-from .dt_agent import DTAgent
+from dt_agent.dt_agent import DTAgent
 
 __all__ = [
     # Configuration
