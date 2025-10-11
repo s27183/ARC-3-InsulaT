@@ -292,7 +292,7 @@ class DTAgent(Agent):
     def _should_train_model(self, latest_frame: FrameData) -> bool:
         should_train_model = (
               self.action_counter % self.train_frequency == 0 or
-              latest_frame.state in [GameState.WIN, GameState.GAME_OVER] or
+              latest_frame.state == GameState.GAME_OVER or
               latest_frame.score != self.current_score
         )
         return should_train_model
@@ -301,10 +301,7 @@ class DTAgent(Agent):
         # Check if score has changed and log score at action count
 
         if latest_frame.score != self.current_score:
-            self.logger.info(
-                f"Score changed from {self.current_score} to {latest_frame.score} at action {self.action_counter}"
-            )
-            self.logger.info("Cleared experience buffer - new level reached")
+            self.logger.info(f"Game {self.game_id} reached level {latest_frame.score} at action {self.action_counter}")
 
             # Clear experience buffer when reaching new level
             self.experience_buffer.clear()

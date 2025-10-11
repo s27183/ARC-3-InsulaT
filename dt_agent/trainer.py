@@ -541,12 +541,6 @@ def train_model(
         f"{len(completion_sequences)} completion, {len(gameover_sequences)} gameover) "
         f"→ {num_batches} batches"
     )
-    print(
-        f"🎯 Starting DT training. Game: {game_id}. "
-        f"{total_sequences} sequences ({len(change_sequences)} change, "
-        f"{len(completion_sequences)} completion, {len(gameover_sequences)} gameover) "
-        f"→ {num_batches} batches"
-    )
 
     # === STEP 3: Training loop with gradient accumulation ===
     model.train()

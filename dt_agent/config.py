@@ -48,7 +48,7 @@ DEFAULT_DT_CONFIG = {
     "gameover_replay_size": 320,  # Number of GAME_OVER sequences per training round
 
     # Replay Variation (for completion and GAME_OVER sequences)
-    "replay_variation_min": 0.8,  # Minimum variation factor (80% of target length)
+    "replay_variation_min": 0.7,  # Minimum variation factor (80% of target length)
     "replay_variation_max": 1.0,  # Maximum variation factor (100% of target length)
 
     # Experience Management
