@@ -1,21 +1,29 @@
 """
-Pure Decision Transformer for ARC-AGI-3
+Vision Decision Transformer (ViDT) for ARC-AGI-3
 
-This module implements a Pure Decision Transformer that replaces the hybrid bandit-DT
-architecture with a unified transformer-based approach for direct action prediction.
+This module implements a Decision Transformer with Vision Transformer state encoder,
+triple-head prediction, and hierarchical context windows for multi-objective RL.
 
 Architecture:
-- StateEncoder: CNN backbone (reuses proven bandit architecture)
-- ActionEmbedding: Handles 4101 actions (ACTION1-5 + 64x64 coordinates)
-- PureDecisionTransformer: Interleaved state-action sequences → direct action classification
-- ActionSampler: Temperature sampling with action masking
+- ViT State Encoder: Patch-based attention (8×8 patches) with learnable per-patch alpha mixing
+- Action Embedding: Learned embeddings for 4101 actions (ACTION1-5 + 64x64 coordinates)
+- Decision Transformer: Causal attention over state-action sequences with hierarchical contexts
+- Triple-Head Prediction: Change (exploration) + Completion (goal) + GAME_OVER (safety)
+- Multiplicative Action Sampling: Combines all three heads for balanced decision-making
 
 Key Features:
-- State-action sequences with local context (k=15-20 steps)
-- Direct action classification over 4101 action space
-- Configurable loss functions (cross-entropy, selective, hybrid)
-- Temperature-based exploration
-- Reuses bandit CNN for spatial reasoning
+- Hierarchical context windows: 15/100/300 steps for change/completion/gameover heads
+- Head-specific eligibility decay: 0.7/0.8/0.9 for multi-timescale credit assignment
+- Importance-weighted replay: 1:5:10 ratio (16:80:160 sequences per training round)
+- Outcome-anchored sampling: Completion/gameover sequences end at critical events
+- Joint optimization: Single optimizer step on accumulated gradients from all heads
+- Gradient accumulation: ~256 gradient contributions per optimizer step
+
+Biological Inspiration:
+- VTA/SNc dopamine systems: Change/Completion heads (approach/reward)
+- Habenula/RMTg: GAME_OVER head (avoidance/punishment)
+- Hippocampal reverse replay: Backward temporal credit assignment
+- Basal ganglia: Multiplicative integration of Go/NoGo pathways
 """
 
 from typing import Any
@@ -27,7 +35,6 @@ from collections import deque
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
@@ -111,7 +118,7 @@ class DTAgent(Agent):
         self.num_colours = 16
 
         # Scores as level indicators
-        self.current_score = None
+        self.current_score = 0
 
         # Experience buffer for training with uniqueness tracking
         self.experience_buffer = deque(maxlen=self.config["max_buffer_size"])
@@ -134,13 +141,22 @@ class DTAgent(Agent):
     def _frame_to_tensor(self, latest_frame: FrameData) -> None | torch.Tensor:
         """Convert frame data to integer tensor for ViT with learned embeddings.
 
-        Returns integer grid [64, 64] with values 0-15 instead of one-hot encoding.
-        This is 16x more memory efficient and aligns with transformer best practices.
+        Args:
+            latest_frame: FrameData object with frame data and metadata
+
+        Returns:
+            [64, 64] tensor with values 0-15
         """
         # Convert the frame to a numpy array
         frame = np.array(latest_frame.frame[-1], dtype=np.int64)
 
-        assert frame.shape == (self.grid_size, self.grid_size)
+        try:
+            assert frame.shape == (self.grid_size, self.grid_size)
+        except AssertionError:
+            self.logger.error(
+                f"Error in frame shape: {frame.shape} != {self.grid_size}x{self.grid_size}"
+            )
+            return None
 
         # Keep as integer tensor: (64, 64) with values 0-15
         tensor = torch.from_numpy(frame).long()
@@ -186,17 +202,13 @@ class DTAgent(Agent):
         Returns:
             action: The action to take
         """
-
-        # Check level completion
-        self._check_level_completion(latest_frame=latest_frame)
-
-        # Reset when the game state is either NOT_PLAYED or GAME_OVER
-        if latest_frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
+        # Reset when the game when it's initilized
+        if latest_frame.state == GameState.NOT_PLAYED:
             self.experience_buffer.clear()
             self.hashed_experiences.clear()
             self.prev_frame = None
             self.prev_action_idx = None
-            self.current_score = None
+            self.current_score = 0
             action = GameAction.RESET
             action.reasoning = "Game needs reset due to NOT_PLAYED or GAME_OVER"
             return action
@@ -206,39 +218,10 @@ class DTAgent(Agent):
 
         # Store unique experience
         if current_frame is not None:
-            self._store_experience(current_frame, current_score=latest_frame.score)
+            self._store_experience(current_frame, latest_frame)
 
-        # If frame processing failed, reset tracking and return random action
-        if current_frame is None:
-            print("Error detected in converting latest frame to tensor!")
-            self.prev_frame = None
-            self.prev_action_idx = None
-            action = random.choice(self.action_list[:5])  # Random ACTION1-ACTION5
-            action.reasoning = (
-                f"Encountered a no-op frame, use a random action - {action.value}"
-            )
-            return action
-
-        # Get action predictions from DT model (following bandit pattern exactly)
-        action_idx, coord_idx, selected_action = self.select_action(
-            latest_frame_torch=current_frame, latest_frame=latest_frame
-        )
-
-        # Store current frame and action for next experience creation
-        # Keep as integer grid [64, 64] with values 0-15
-        self.prev_frame = current_frame.cpu().numpy().astype(np.int64)
-
-        # Store unified action index: 0-4 for ACTION1-5, 5+ for coordinates
-        if action_idx < 5:
-            self.prev_action_idx = action_idx
-        else:
-            self.prev_action_idx = 5 + coord_idx  # Unified action space
-
-        # Increment action counter
-        self.action_counter += 1
-
-        # Train DT model at regular frequency
-        if self.action_counter % self.train_frequency == 0:
+        # Train the model
+        if self._should_train_model(latest_frame):
             buffer_size = len(self.experience_buffer)
             if buffer_size >= self.config["min_buffer_size"]:
                 self.logger.info(
@@ -260,8 +243,59 @@ class DTAgent(Agent):
                     f"Skipping training: buffer size {buffer_size} < min_buffer_size {self.config['min_buffer_size']}"
                 )
 
+        # Check level completion and perform reset
+        self._check_level_completion(latest_frame=latest_frame)
+
+        # Reset when the game state is GAME_OVER
+        if latest_frame.state == GameState.GAME_OVER:
+            self.experience_buffer.clear()
+            self.hashed_experiences.clear()
+            self.prev_frame = None
+            self.prev_action_idx = None
+            self.current_score = 0
+            action = GameAction.RESET
+            action.reasoning = "Game needs reset due to NOT_PLAYED or GAME_OVER"
+            return action
+
+        # If frame processing failed, reset tracking and return random action
+        if current_frame is None:
+            print("Error detected in converting latest frame to tensor!")
+            self.prev_frame = None
+            self.prev_action_idx = None
+            action = random.choice(self.action_list[:5])  # Random ACTION1-ACTION5
+            action.reasoning = (
+                f"Encountered a no-op frame, use a random action - {action.value}"
+            )
+            return action
+
+        # If no reset and error, get action predictions from DT model (following bandit pattern exactly)
+        action_idx, coord_idx, selected_action = self.select_action(
+            latest_frame_torch=current_frame, latest_frame=latest_frame
+        )
+
+        # Store current frame and action for next experience creation
+        # Keep as integer grid [64, 64] with values 0-15
+        self.prev_frame = current_frame.cpu().numpy().astype(np.int64)
+
+        # Store unified action index: 0-4 for ACTION1-5, 5+ for coordinates
+        if action_idx < 5:
+            self.prev_action_idx = action_idx
+        else:
+            self.prev_action_idx = 5 + coord_idx  # Unified action space
+
+        # Increment action counter
+        self.action_counter += 1
+
 
         return selected_action
+
+    def _should_train_model(self, latest_frame: FrameData) -> bool:
+        should_train_model = (
+              self.action_counter % self.train_frequency == 0 or
+              latest_frame.state in [GameState.WIN, GameState.GAME_OVER] or
+              latest_frame.score != self.current_score
+        )
+        return should_train_model
 
     def _check_level_completion(self, latest_frame: FrameData) -> None | GameAction:
         # Check if score has changed and log score at action count
@@ -270,13 +304,11 @@ class DTAgent(Agent):
             self.logger.info(
                 f"Score changed from {self.current_score} to {latest_frame.score} at action {self.action_counter}"
             )
+            self.logger.info("Cleared experience buffer - new level reached")
 
             # Clear experience buffer when reaching new level
             self.experience_buffer.clear()
             self.hashed_experiences.clear()
-            self.logger.info("Cleared experience buffer - new level reached")
-
-            # Reset previous tracking
             self.prev_frame = None
             self.prev_action_idx = None
             self.current_score = latest_frame.score
@@ -284,7 +316,7 @@ class DTAgent(Agent):
             #TODO: Should we reset the model as well? But retaining the model across levels may lead to better generalization
 
 
-    def _store_experience(self, current_frame: torch.Tensor, current_score: int):
+    def _store_experience(self, current_frame: torch.Tensor, latest_frame: FrameData):
         if self.prev_frame is not None:
             # Compute hash for uniqueness check
             hashed_experience = self._hash_experience(
@@ -296,7 +328,7 @@ class DTAgent(Agent):
                 # Convert current frame to numpy int64 for comparison
                 latest_frame_np = current_frame.cpu().numpy().astype(np.int64)
                 frame_changed = not np.array_equal(self.prev_frame, latest_frame_np)
-                level_completion = current_score != self.current_score
+                level_completion = latest_frame.score != self.current_score
                 # Inverted GAME_OVER: 1.0 = survived (good), 0.0 = GAME_OVER (bad)
                 game_over_occurred = latest_frame.state == GameState.GAME_OVER
                 gameover_reward = 0.0 if game_over_occurred else 1.0
