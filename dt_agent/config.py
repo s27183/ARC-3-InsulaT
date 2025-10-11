@@ -20,8 +20,8 @@ DEFAULT_DT_CONFIG = {
     # Training Parameters
     "learning_rate": 1e-4,  # Adam learning rate
     "weight_decay": 1e-5,  # L2 regularization
-    "train_frequency": 10,  # Train every N actions (reduced to save compute with longer context)
-    "min_buffer_size": 10,  # Minimum experience buffer size to start training
+    "train_frequency": 5,  # Train every N actions (reduced to save compute with longer context)
+    "min_buffer_size": 5,  # Minimum experience buffer size to start training
 
     # Loss Function Configuration
     "action_entropy_coeff": 0.0001,  # Entropy coefficient for discrete actions
@@ -35,7 +35,7 @@ DEFAULT_DT_CONFIG = {
     # Hierarchical Context Windows (Head-Specific)
     "change_context_len": 5,  # Context length for change head (immediate effects)
     "completion_context_len": 50,  # Context length for completion head (goal sequences)
-    "gameover_context_len": 200,  # Context length for GAME_OVER head (failure causal chains)
+    "gameover_context_len": 100,  # Context length for GAME_OVER head (failure causal chains)
 
     # Head-Specific Eligibility Decay (for temporal credit assignment)
     "change_eligibility_decay": 0.7,  # Fast decay for immediate effects
@@ -43,12 +43,12 @@ DEFAULT_DT_CONFIG = {
     "gameover_eligibility_decay": 0.9,  # Slow decay for long causal chains
 
     # Importance-Weighted Replay (Head-Specific Replay Sizes)
-    "change_replay_size": 32,  # Number of change sequences per training round
-    "completion_replay_size": 320,  # Number of completion sequences per training round
-    "gameover_replay_size": 320,  # Number of GAME_OVER sequences per training round
+    "change_replay_size": 16,  # Number of change sequences per training round
+    "completion_replay_size": 160,  # Number of completion sequences per training round
+    "gameover_replay_size": 160,  # Number of GAME_OVER sequences per training round
 
     # Replay Variation (for completion and GAME_OVER sequences)
-    "replay_variation_min": 0.7,  # Minimum variation factor (80% of target length)
+    "replay_variation_min": 0.5,  # Minimum variation factor (80% of target length)
     "replay_variation_max": 1.0,  # Maximum variation factor (100% of target length)
 
     # Experience Management
@@ -75,40 +75,38 @@ CPU_PURE_DT_CONFIG = {
     "embed_dim": 128,  # Smaller model for CPU
     "num_layers": 2,  # Fewer layers for CPU
     "max_context_len": 150,  # Must accommodate gameover_context_len
-    "batch_size": 16,  # Smaller batch for CPU
     # ViT configuration for CPU
     "vit_num_layers": 2,  # Fewer ViT layers for CPU
     "vit_num_heads": 4,  # Fewer attention heads for CPU (128/4 = 32)
     "vit_patch_size": 8,  # Keep patch size same
     "vit_cell_embed_dim": 32,  # Smaller cell embeddings for CPU
     # Hierarchical context for CPU (shorter windows)
-    "change_context_len": 10,
+    "change_context_len": 5,
     "completion_context_len": 50,
-    "gameover_context_len": 150,
+    "gameover_context_len": 100,
     # Smaller replay sizes for CPU
-    "change_replay_size": 8,
-    "completion_replay_size": 40,
-    "gameover_replay_size": 80,
+    "change_replay_size": 16,
+    "completion_replay_size": 160,
+    "gameover_replay_size": 160,
 }
 
 GPU_PURE_DT_CONFIG = {
     **DEFAULT_DT_CONFIG,
     "embed_dim": 512,  # Larger model for GPU
     "num_layers": 6,  # More layers for GPU
-    "max_context_len": 400,  # Must accommodate gameover_context_len
-    "batch_size": 16,  # Smaller batch to fit longer context in memory
+    "max_context_len": 300,  # Must accommodate gameover_context_len
     # ViT configuration for GPU
     "vit_num_layers": 6,  # More ViT layers for GPU
     "vit_num_heads": 16,  # More attention heads for GPU (512/16 = 32)
     "vit_patch_size": 8,  # Keep patch size same
     "vit_cell_embed_dim": 128,  # Larger cell embeddings for GPU
     # Hierarchical context for GPU (longer windows for better performance)
-    "change_context_len": 20,
-    "completion_context_len": 150,
-    "gameover_context_len": 400,
+    "change_context_len": 5,
+    "completion_context_len": 100,
+    "gameover_context_len": 200,
     # Larger replay sizes for GPU
     "change_replay_size": 32,
-    "completion_replay_size": 160,
+    "completion_replay_size": 320,
     "gameover_replay_size": 320,
 }
 
