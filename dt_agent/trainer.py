@@ -210,7 +210,7 @@ def create_gameover_sequences(
         experience_buffer: Deque of experience dictionaries
         config: Configuration dictionary with:
             - "gameover_replay_size": int (default 160)
-            - "gameover_context_len": int (default 300)
+            - "gameover_context_len": int (default 160)
             - "replay_variation_min": float (default 0.8)
             - "replay_variation_max": float (default 1.0)
 
