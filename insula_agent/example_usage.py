@@ -6,7 +6,7 @@ This example demonstrates how to use the PureDTAgent directly without
 going through the custom_agents/action.py module.
 """
 
-from dt_agent import DTAgent, load_dt_config
+from insula_agent import DTAgent, load_dt_config
 
 
 def run_pure_dt_agent_example():
