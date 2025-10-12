@@ -1,28 +1,37 @@
 """
-Vision Decision Transformer (ViDT) for ARC-AGI-3
+Insula: Insular Cortex-Inspired Online Supervised Learning agent for ARC-AGI-3
 
-This module implements a Decision Transformer with Vision Transformer state encoder,
-triple-head prediction, and hierarchical context windows for multi-objective RL.
+This module implements Insula, an online supervised learning architecture with
+multi-level insular cortex-inspired integration. NOT a reinforcement learning model—
+supervision signals are generated on-the-fly from game API outcomes.
 
-Architecture:
-- ViT State Encoder: Patch-based attention (8×8 patches) with learnable per-patch alpha mixing
+Architecture (Five-Level Hierarchy):
+1. Cell Integration: Color + position → unified cell representation (insular-inspired)
+2. Spatial Integration (Posterior Insula): ViT processes 64×64 grid → spatial state
+3. Temporal Integration (Anterior Insula): Decision Transformer adds action history context
+4. Decision Projection (Insula→Striatum): Triple heads predict action probabilities
+5. Learning Systems (Hippocampus+Striatum): Replay with temporal hindsight traces
+
+Components:
+- ViT State Encoder: Patch-based attention (8×8 patches) with learnable per-patch alpha
 - Action Embedding: Learned embeddings for 4101 actions (ACTION1-5 + 64x64 coordinates)
-- Decision Transformer: Causal attention over state-action sequences with hierarchical contexts
+- Decision Transformer: Causal attention over state-action sequences
 - Triple-Head Prediction: Change (exploration) + Completion (goal) + GAME_OVER (safety)
-- Multiplicative Action Sampling: Combines all three heads for balanced decision-making
+- Multiplicative Action Sampling: Combines all three heads for balanced decisions
 
 Key Features:
+- Online supervised learning: Labels from game API outcomes (change/completion/gameover)
 - Hierarchical context windows: 15/100/300 steps for change/completion/gameover heads
-- Head-specific eligibility decay: 0.7/0.8/0.9 for multi-timescale credit assignment
-- Importance-weighted replay: 1:5:10 ratio (16:80:160 sequences per training round)
-- Outcome-anchored sampling: Completion/gameover sequences end at critical events
+- Head-specific eligibility decay: 0.7/0.8/0.9 for multi-timescale learning
+- Importance-weighted replay: 1:5:10 ratio (critical events replayed more)
+- Temporal hindsight traces: Individual action evaluation after seeing full trajectory
 - Joint optimization: Single optimizer step on accumulated gradients from all heads
-- Gradient accumulation: ~256 gradient contributions per optimizer step
 
 Biological Inspiration:
-- VTA/SNc dopamine systems: Change/Completion heads (approach/reward)
-- Habenula/RMTg: GAME_OVER head (avoidance/punishment)
-- Hippocampal reverse replay: Backward temporal credit assignment
+- Insular cortex: Multi-level integration hub (cell→spatial→temporal→decision)
+- VTA/SNc dopamine: Change/Completion heads (reward prediction)
+- Habenula/RMTg: GAME_OVER head (aversive prediction)
+- Hippocampal replay: Episodic memory with importance-weighted prioritization
 - Basal ganglia: Multiplicative integration of Go/NoGo pathways
 """
 
@@ -40,22 +49,25 @@ from torch.utils.tensorboard import SummaryWriter
 from agents.agent import Agent
 from agents.structs import FrameData, GameAction, GameState
 
-from dt_agent.config import load_dt_config, validate_config
-from dt_agent.models import DecisionTransformer
-from dt_agent.trainer import train_model
-from dt_agent.utils import setup_logging
+from insula_agent.config import load_dt_config, validate_config
+from insula_agent.models import DecisionTransformer
+from insula_agent.trainer import train_model
+from insula_agent.utils import setup_logging
 
 
-class DTAgent(Agent):
-    """Self-contained Decision Transformer Agent for ARC-AGI-3.
+class Insula(Agent):
+    """Insula agent for ARC-AGI-3.
 
-    This agent uses a unified transformer architecture for direct action prediction.
+    Online supervised learning agent with insular cortex-inspired multi-level integration.
+    Generates supervision signals on-the-fly from game outcomes (NOT reinforcement learning).
 
     Features:
-    - State-action sequence modeling with temporal context
+    - State-action sequence modeling with hierarchical temporal context
+    - Triple-head prediction: Change/Completion/GAME_OVER
     - Temperature-based exploration with action masking
-    - Experience buffer preserving temporal order
-    - Integrated logging
+    - Experience buffer for episodic replay
+    - Temporal hindsight traces for retrospective action evaluation
+    - Importance-weighted replay (1:10:10 ratio)
     - Full Agent interface compatibility
     """
 
@@ -73,11 +85,14 @@ class DTAgent(Agent):
         self.MAX_ACTIONS = float("inf")
 
         # Setup experiment directory and logging
-        base_dir = Path.cwd() / "dt_agent/logs"
+        base_dir = Path.cwd() / "insula_agent/logs"
         base_dir.mkdir(parents=True, exist_ok=True)
         log_file = base_dir / "run.log"
         setup_logging(log_file)
         self.logger = logging.getLogger(f"DTAgent_{self.game_id}")
+
+        # Log card id
+        self.logger.info(f"Card ID: {self.card_id}")
 
         tensorboard_dir = base_dir / f"{self.game_id}/tensorboard"
         tensorboard_dir.mkdir(parents=True, exist_ok=True)

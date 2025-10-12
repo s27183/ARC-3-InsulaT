@@ -1,6 +1,11 @@
 """
-This module contains all training-related functions for the
-Decision Transformer with hierarchical context windows.
+InsulaAgent Training Module
+
+This module contains all training-related functions for InsulaAgent,
+including hierarchical context windows, temporal hindsight traces,
+and importance-weighted replay.
+
+Uses online supervised learning with self-generated labels from game outcomes.
 """
 
 from typing import Any

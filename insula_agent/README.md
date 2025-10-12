@@ -307,16 +307,16 @@ export PURE_DT_TEMPERATURE=0.8
 ### Basic Usage
 
 ```python
-from dt_agent import PureDTAgent
+from insula_agent import PureDTAgent
 
 # Initialize agent (inherits from agents.agent.Agent)
 agent = PureDTAgent(
-    card_id='example_card',
-    game_id='example_game',
-    agent_name='PureDT_v1',
-    ROOT_URL='https://arc-agi-3.com',
-    record=True,
-    tags=['pure_dt', 'transformer']
+        card_id='example_card',
+        game_id='example_game',
+        agent_name='PureDT_v1',
+        ROOT_URL='https://arc-agi-3.com',
+        record=True,
+        tags=['pure_dt', 'transformer']
 )
 
 # Run game loop (inherited from base Agent class)
@@ -326,7 +326,7 @@ agent.main()
 ### Custom Configuration
 
 ```python
-from dt_agent import load_pure_dt_config, PureDTAgent
+from insula_agent import load_pure_dt_config, PureDTAgent
 
 # Load custom config
 config = load_pure_dt_config(device='cuda', loss_type='hybrid')

@@ -2,9 +2,151 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+class CellPositionEncoder(nn.Module):
+    """Encodes cell positions as learnable smooth function of normalized coordinates.
+
+    Instead of lookup table, learns a continuous function that maps (x, y) → position vector.
+    This allows generalization and smooth interpolation for spatial positions.
+
+    Args:
+        pos_dim: Dimension of position encoding (default: 32)
+        hidden_dim: Hidden layer dimension (default: pos_dim * 2)
+        grid_size: Grid dimension (default: 64 for 64×64 grids)
+    """
+
+    def __init__(self, pos_dim: int = 32, hidden_dim: int = None, grid_size: int = 64):
+        super().__init__()
+        if hidden_dim is None:
+            hidden_dim = pos_dim * 2
+
+        self.pos_dim = pos_dim
+        self.grid_size = grid_size
+
+        # Learnable smooth function: normalized (x, y) → position encoding
+        self.encoder = nn.Sequential(
+            nn.Linear(2, hidden_dim),  # 2D coordinates → hidden
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, pos_dim),  # hidden → position encoding
+        )
+
+    def forward(self, grid_states: torch.Tensor) -> torch.Tensor:
+        """Encode positions for all cells in batch of grids.
+
+        Args:
+            grid_states: [batch, 64, 64] - Integer grids (only used for shape)
+
+        Returns:
+            pos_encodings: [batch, 64, 64, pos_dim] - Position encodings for each cell
+        """
+        batch_size = grid_states.shape[0]
+        device = grid_states.device
+
+        # Create normalized 2D coordinate grid: [0, 1] × [0, 1]
+        # Shape: [64, 64, 2]
+        y_coords = torch.linspace(0, 1, self.grid_size, device=device)
+        x_coords = torch.linspace(0, 1, self.grid_size, device=device)
+        yy, xx = torch.meshgrid(y_coords, x_coords, indexing="ij")
+        coords = torch.stack([xx, yy], dim=-1)  # [64, 64, 2]
+
+        # Flatten coordinates: [4096, 2]
+        coords_flat = coords.reshape(-1, 2)
+
+        # Encode all positions: [4096, pos_dim]
+        pos_encodings_flat = self.encoder(coords_flat)
+
+        # Reshape to grid: [64, 64, pos_dim]
+        pos_encodings = pos_encodings_flat.reshape(
+            self.grid_size, self.grid_size, self.pos_dim
+        )
+
+        # Expand for batch: [batch, 64, 64, pos_dim]
+        pos_encodings = pos_encodings.unsqueeze(0).expand(batch_size, -1, -1, -1)
+
+        return pos_encodings
+
+
+class InsularCellIntegration(nn.Module):
+    """Integrates cell color and position using insular cortex-inspired mechanism.
+
+    Biological Inspiration:
+        Insular cortex integrates multimodal information (taste + temperature → flavor).
+        Mechanism: Concatenate modalities → Learn fusion → Output unified representation.
+
+    Architecture:
+        - Concatenate color embedding + position encoding
+        - Linear projection learns optimal fusion
+        - LayerNorm stabilizes
+        - GELU activation for smooth nonlinearity
+        - Output dimension = color_dim (compression forces integration)
+
+    Args:
+        color_dim: Dimension of color embeddings (e.g., 64)
+        pos_dim: Dimension of position encodings (e.g., 32)
+    """
+
+    def __init__(self, color_dim: int = 64, pos_dim: int = 32):
+        super().__init__()
+        self.color_dim = color_dim
+        self.pos_dim = pos_dim
+        # Output dimension hardcoded to color_dim for parameter efficiency
+        # and to maintain patch projection dimensions unchanged
+        output_dim = color_dim
+
+        # Insular-inspired integration: concat → learn fusion → unified repr
+        self.integration = nn.Sequential(
+            nn.Linear(color_dim + pos_dim, output_dim),
+            nn.LayerNorm(output_dim),
+            nn.GELU(),
+        )
+
+    def forward(
+        self, color_embeddings: torch.Tensor, pos_encodings: torch.Tensor, patches: torch.Tensor
+    ) -> torch.Tensor:
+        """Integrate color and position into unified cell representations.
+
+        Args:
+            color_embeddings: [batch, 8, 8, 64, color_dim] - Embedded cell colors within patches
+            pos_encodings: [batch, 64, 64, pos_dim] - Position encodings for each cell
+            patches: [batch, 8, 8, 64] - Integer cell values (used to extract positions)
+
+        Returns:
+            integrated_cells: [batch, 8, 8, 64, color_dim] - Unified cell representations
+        """
+        batch_size = patches.shape[0]
+        patch_size = 8  # 8×8 patches
+
+        # Extract position encodings for cells in each patch
+        # patches shape: [batch, 8, 8, 64]
+        # pos_encodings shape: [batch, 64, 64, pos_dim]
+
+        # Reshape patches to get cell coordinates: [batch, 8, 8, 8, 8]
+        patches_2d = patches.view(batch_size, 8, 8, patch_size, patch_size)
+
+        # Extract corresponding position encodings by unfolding pos_encodings
+        # Unfold pos_encodings: [batch, 64, 64, pos_dim] → [batch, 8, 8, 8, 8, pos_dim]
+        pos_unfolded = pos_encodings.unfold(1, patch_size, patch_size).unfold(2, patch_size, patch_size)
+        # pos_unfolded shape: [batch, 8, 8, pos_dim, 8, 8]
+        # Permute to: [batch, 8, 8, 8, 8, pos_dim]
+        pos_unfolded = pos_unfolded.permute(0, 1, 2, 4, 5, 3)
+
+        # Flatten spatial dims within each patch: [batch, 8, 8, 64, pos_dim]
+        pos_per_cell = pos_unfolded.reshape(batch_size, 8, 8, 64, -1)
+
+        # Concatenate color + position: [batch, 8, 8, 64, color_dim + pos_dim]
+        concat = torch.cat([color_embeddings, pos_per_cell], dim=-1)
+
+        # Integrate: [batch, 8, 8, 64, color_dim]
+        integrated = self.integration(concat)
+
+        return integrated
+
+
 class ViTStateEncoder(nn.Module):
     """Vision Transformer State Encoder with Learned Cell Embeddings.
 
+    Part of InsulaAgent architecture (posterior insula analog).
     Encodes 64×64 grids into vector representations using patch-based
     self-attention with learned embeddings for each cell value (0-15)
 
@@ -29,6 +171,8 @@ class ViTStateEncoder(nn.Module):
         num_heads: int = 8,
         dropout: float = 0.1,
         use_cls_token: bool = True,
+        pos_dim_ratio: float = 0.5,  # Position encoding dimension as ratio of cell_embed_dim
+        use_patch_pos_encoding: bool = False,  # Whether to use patch-level positional encoding
     ):
         super().__init__()
 
@@ -39,6 +183,16 @@ class ViTStateEncoder(nn.Module):
         num_patches_per_dim = self.grid_size // patch_size  # 8
         self.num_patches = num_patches_per_dim ** 2  # 64 patches for 8×8
         self.use_cls_token = use_cls_token
+        self.use_patch_pos_encoding = use_patch_pos_encoding
+
+        # Cell-level positional encoding (insular-inspired integration)
+        pos_dim = int(cell_embed_dim * pos_dim_ratio)
+        self.cell_position_encoder = CellPositionEncoder(
+            pos_dim=pos_dim, grid_size=self.grid_size
+        )
+        self.insular_integration = InsularCellIntegration(
+            color_dim=cell_embed_dim, pos_dim=pos_dim
+        )
 
         # Learned cell embedding: each color (0-15) → vector
         self.cell_embedding = nn.Embedding(num_colors, cell_embed_dim)
@@ -54,10 +208,13 @@ class ViTStateEncoder(nn.Module):
         # Patch projection: aggregated cell embeddings → transformer dimension
         self.patch_projection = nn.Linear(cell_embed_dim, embed_dim)
 
-        # 2D learnable positional embeddings for patch grid
-        self.pos_embed = nn.Parameter(
-            torch.randn(1, num_patches_per_dim, num_patches_per_dim, embed_dim) * 0.02
-        )
+        # 2D learnable positional embeddings for patch grid (optional, now redundant with cell-level encoding)
+        if use_patch_pos_encoding:
+            self.pos_embed = nn.Parameter(
+                torch.randn(1, num_patches_per_dim, num_patches_per_dim, embed_dim) * 0.02
+            )
+        else:
+            self.pos_embed = None
 
         # CLS token for global representation
         if use_cls_token:
@@ -105,18 +262,27 @@ class ViTStateEncoder(nn.Module):
 
         return patches
 
-    def _embed_and_aggregate_patches(self, patches: torch.Tensor) -> torch.Tensor:
-        """Embed each cell and aggregate within patches using LayerNorm + Attention + Residual.
+    def _embed_and_aggregate_patches(
+        self, patches: torch.Tensor, pos_encodings: torch.Tensor
+    ) -> torch.Tensor:
+        """Embed each cell with insular integration and aggregate within patches.
 
         Args:
             patches: [batch, 8, 8, 64] - Integer cell values 0-15
+            pos_encodings: [batch, 64, 64, pos_dim] - Position encodings for each cell
 
         Returns:
             patch_embeddings: [batch, 8, 8, cell_embed_dim]
         """
-        # Embed each cell: [batch, 8, 8, 64, cell_embed_dim]
+        # Embed each cell color: [batch, 8, 8, 64, cell_embed_dim]
         # Ensure integer type for embedding lookup
-        cell_embeddings = self.cell_embedding(patches.long())
+        cell_color_embeddings = self.cell_embedding(patches.long())
+
+        # Insular-inspired integration: color + position → unified cell representation
+        # Shape: [batch, 8, 8, 64, cell_embed_dim]
+        cell_embeddings = self.insular_integration(
+            cell_color_embeddings, pos_encodings, patches
+        )
 
         # LayerNorm for stable attention computation
         # Shape: [batch, 8, 8, 64, cell_embed_dim]
@@ -130,7 +296,7 @@ class ViTStateEncoder(nn.Module):
         # Shape: [batch, 8, 8, 64, 1]
         attention_weights = F.softmax(attention_scores, dim=3)
 
-        # Weighted sum using original (unnormalized) embeddings
+        # Weighted sum using integrated cell embeddings
         # Shape: [batch, 8, 8, cell_embed_dim]
         attended = (attention_weights * cell_embeddings).sum(dim=3)
 
@@ -158,17 +324,21 @@ class ViTStateEncoder(nn.Module):
         """
         batch_size = grid_states.shape[0]
 
+        # Cell-level position encoding: [batch, 64, 64, pos_dim]
+        pos_encodings = self.cell_position_encoder(grid_states)
+
         # Extract patches: [batch, 8, 8, 64]
         patches = self._extract_patches(grid_states)
 
-        # Embed cells and aggregate: [batch, 8, 8, cell_embed_dim]
-        patch_repr = self._embed_and_aggregate_patches(patches)
+        # Embed cells with insular integration and aggregate: [batch, 8, 8, cell_embed_dim]
+        patch_repr = self._embed_and_aggregate_patches(patches, pos_encodings)
 
         # Project to transformer dimension: [batch, 8, 8, embed_dim]
         x = self.patch_projection(patch_repr)
 
-        # Add 2D positional embeddings
-        x = x + self.pos_embed
+        # Add 2D positional embeddings (optional, redundant with cell-level encoding)
+        if self.pos_embed is not None:
+            x = x + self.pos_embed
 
         # Flatten to sequence: [batch, 64, embed_dim]
         x = x.reshape(batch_size, self.num_patches, -1)
@@ -210,7 +380,14 @@ class ActionEmbedding(nn.Module):
         return self.action_embedding(action_indices)
 
 class DecisionTransformer(nn.Module):
-    """End-to-end transformer for ARC-AGI action prediction using state-action sequences."""
+    """InsulaAgent: Insular cortex-inspired transformer for action prediction.
+
+    Combines Vision Transformer (spatial processing, posterior insula) with
+    Decision Transformer (temporal processing, anterior insula) for multi-level
+    integration: cell → spatial → temporal → decision signals.
+
+    Uses online supervised learning with self-generated labels from game outcomes.
+    """
 
     def __init__(
         self,
@@ -225,10 +402,12 @@ class DecisionTransformer(nn.Module):
         vit_num_heads=8,
         vit_dropout=0.1,
         vit_use_cls_token=True,
+        vit_pos_dim_ratio=0.5,  # Cell position encoding dimension ratio
+        vit_use_patch_pos_encoding=False,  # Whether to use patch-level positional encoding
     ):
         super().__init__()
 
-        # Component modules - Use ViT State Encoder with learned cell embeddings
+        # Component modules - Use ViT State Encoder with insular-inspired cell integration
         self.state_encoder = ViTStateEncoder(
             num_colors=16,
             embed_dim=embed_dim,
@@ -238,6 +417,8 @@ class DecisionTransformer(nn.Module):
             num_heads=vit_num_heads,
             dropout=vit_dropout,
             use_cls_token=vit_use_cls_token,
+            pos_dim_ratio=vit_pos_dim_ratio,
+            use_patch_pos_encoding=vit_use_patch_pos_encoding,
         )
         self.action_embedding = ActionEmbedding(embed_dim=embed_dim)
 
