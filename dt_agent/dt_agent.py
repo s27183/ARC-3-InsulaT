@@ -195,15 +195,17 @@ class DTAgent(Agent):
         Returns:
             action: The action to take
         """
-        # Reset when the game when it's initilized
-        if latest_frame.state == GameState.NOT_PLAYED:
-            self.experience_buffer.clear()
+        # Reset when the game when it's initialized or when GAME_OVER is encountered
+        if latest_frame.state in  [GameState.NOT_PLAYED, GameState.GAME_OVER]:
             self.prev_frame = None
             self.prev_action_idx = None
-            self.current_score = 0
             action = GameAction.RESET
-            action.reasoning = "Game needs reset due to NOT_PLAYED"
-            self.logger.info(f"Game {self.game_id} is initialized")
+            if latest_frame.state is GameState.NOT_PLAYED:
+                action.reasoning = "Game needs reset due to NOT_PLAYED"
+                self.logger.info(f"Game {self.game_id} is initialized")
+            else:
+                action.reasoning = "Game needs reset due to GAME_OVER"
+                self.logger.info(f"🤖 GAME OVER. Game {self.game_id} is reset. Current score: {self.current_score}")
             return action
 
         # Convert current frame to torch tensor
@@ -238,17 +240,6 @@ class DTAgent(Agent):
 
         # Check level completion and perform reset
         self._check_level_completion(latest_frame=latest_frame)
-
-        # Reset when the game state is GAME_OVER
-        if latest_frame.state == GameState.GAME_OVER:
-            self.experience_buffer.clear()
-            self.prev_frame = None
-            self.prev_action_idx = None
-            self.current_score = 0
-            action = GameAction.RESET
-            action.reasoning = "Game needs reset due to GAME_OVER"
-            self.logger.info(f"Game {self.game_id} is reset. Current score: {self.current_score}")
-            return action
 
         # If frame processing failed, reset tracking and return a random action
         if current_frame is None:
