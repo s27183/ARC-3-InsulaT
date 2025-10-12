@@ -95,22 +95,26 @@ CPU_PURE_DT_CONFIG = {
 
 GPU_PURE_DT_CONFIG = {
     **DEFAULT_DT_CONFIG,
-    "embed_dim": 512,  # Larger model for GPU
-    "num_layers": 6,  # More layers for GPU
-    "max_context_len": 300,  # Must accommodate gameover_context_len
+    # Use DEFAULT_DT_CONFIG values for balanced GPU config
+    # (Previous aggressive config: embed_dim=512, num_layers=6 → 50M params)
+    # (New conservative config matches DEFAULT → ~10M params, reasonable scaling from 2.3M CPU)
+    "embed_dim": 256,  # Same as DEFAULT (2× CPU)
+    "num_layers": 4,  # Same as DEFAULT (2× CPU)
+    "num_heads": 8,  # Same as DEFAULT
+    "max_context_len": 300,  # Same as DEFAULT
     # ViT configuration for GPU
-    "vit_num_layers": 6,  # More ViT layers for GPU
-    "vit_num_heads": 16,  # More attention heads for GPU (512/16 = 32)
+    "vit_num_layers": 4,  # Same as DEFAULT (2× CPU)
+    "vit_num_heads": 8,  # Same as DEFAULT (2× CPU, 256/8 = 32)
     "vit_patch_size": 8,  # Keep patch size same
-    "vit_cell_embed_dim": 128,  # Larger cell embeddings for GPU
-    # Hierarchical context for GPU (longer windows for better performance)
+    "vit_cell_embed_dim": 64,  # Same as DEFAULT (2× CPU)
+    # Hierarchical context for GPU (same as DEFAULT)
     "change_context_len": 5,
-    "completion_context_len": 100,
-    "gameover_context_len": 200,
-    # Larger replay sizes for GPU
-    "change_replay_size": 32,
-    "completion_replay_size": 320,
-    "gameover_replay_size": 320,
+    "completion_context_len": 50,
+    "gameover_context_len": 100,
+    # Replay sizes for GPU (modest increase from CPU)
+    "change_replay_size": 32,  # 2× CPU
+    "completion_replay_size": 320,  # 2× CPU
+    "gameover_replay_size": 320,  # 2× CPU
 }
 
 

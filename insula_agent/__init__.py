@@ -1,7 +1,7 @@
 """
-InsulaAgent Module
+Insula Module
 
-This module provides InsulaAgent - an online supervised learning architecture
+This module provides Insula - an online supervised learning architecture
 with insular cortex-inspired multi-level integration for ARC-AGI-3.
 """
 

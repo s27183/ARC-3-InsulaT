@@ -30,7 +30,7 @@ def run_pure_dt_agent_example():
         # The agent is now ready to use with the ARC-AGI-3 framework
         print(f"✅ Pure DT Agent initialized successfully!")
         print(f"   - Device: {agent.device}")
-        print(f"   - Model: {agent.pure_dt_model.__class__.__name__}")
+        print(f"   - Model: {agent.decision_model.__class__.__name__}")
         print(f"   - Configuration: {agent.config['loss_type']} loss")
         print(f"   - Context length: {agent.config['context_length']}")
         print(f"   - Temperature: {agent.config['temperature']}")
