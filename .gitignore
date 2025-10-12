@@ -29,4 +29,4 @@ recordings/
 **/docs
 
 # tests
-dt_agent/tests
+insula_agent/tests
