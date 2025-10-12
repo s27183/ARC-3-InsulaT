@@ -81,7 +81,7 @@ class Insula(Agent):
         torch.manual_seed(seed % (2**32 - 1))
         self.start_time = time.time()
 
-        # Override MAX_ACTIONS - no limit for DT
+        # Override MAX_ACTIONS - no limit for Insula
         self.MAX_ACTIONS = float("inf")
 
         # Setup experiment directory and logging
@@ -89,7 +89,7 @@ class Insula(Agent):
         base_dir.mkdir(parents=True, exist_ok=True)
         log_file = base_dir / "run.log"
         setup_logging(log_file)
-        self.logger = logging.getLogger(f"DTAgent_{self.game_id}")
+        self.logger = logging.getLogger(f"InsulaAgent_{self.game_id}")
 
         # Log card id
         self.logger.info(f"Card ID: {self.card_id}")
@@ -100,13 +100,13 @@ class Insula(Agent):
 
         # Device configuration
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.logger.info(f"DT Agent using device: {self.device}")
+        self.logger.info(f"Insula Agent using device: {self.device}")
 
         # Model initialization
         self.config = load_dt_config(device=str(self.device))
         validate_config(self.config)
 
-        self.pure_dt_model = DecisionTransformer(
+        self.decision_model = DecisionTransformer(
             embed_dim=self.config["embed_dim"],
             num_layers=self.config["num_layers"],
             num_heads=self.config["num_heads"],
@@ -121,7 +121,7 @@ class Insula(Agent):
         ).to(self.device)
 
         self.optimizer = torch.optim.Adam(
-            self.pure_dt_model.parameters(),
+            self.decision_model.parameters(),
             lr=self.config["learning_rate"],
             weight_decay=self.config["weight_decay"],
         )
@@ -150,7 +150,7 @@ class Insula(Agent):
             GameAction.ACTION4,
             GameAction.ACTION5,
         ]
-        self.logger.info(f"DT Agent initialized for game_id: {self.game_id}")
+        self.logger.info(f"Insula Agent initialized for game_id: {self.game_id}")
 
     def _frame_to_tensor(self, latest_frame: FrameData) -> None | torch.Tensor:
         """Convert frame data to integer tensor for ViT with learned embeddings.
@@ -210,6 +210,32 @@ class Insula(Agent):
         Returns:
             action: The action to take
         """
+        # Train the model
+        if self._should_train_model(latest_frame):
+            buffer_size = len(self.experience_buffer)
+            if buffer_size >= self.config["min_buffer_size"]:
+                self.logger.info(
+                    f"🤖 Training Insula model. Game: {self.game_id} with (buffer size: {buffer_size})"
+                )
+                train_model(
+                    model=self.decision_model,
+                    optimizer=self.optimizer,
+                    experience_buffer=self.experience_buffer,
+                    config=self.config,
+                    device=self.device,
+                    writer=self.writer,
+                    logger=self.logger,
+                    game_id=self.game_id,
+                    action_counter=self.action_counter,
+                )
+            else:
+                self.logger.debug(
+                    f"Skipping training: buffer size {buffer_size} < min_buffer_size {self.config['min_buffer_size']}"
+                )
+
+        # Check level completion
+        self._check_level_completion(latest_frame=latest_frame)
+
         # Reset when the game when it's initialized or when GAME_OVER is encountered
         if latest_frame.state in  [GameState.NOT_PLAYED, GameState.GAME_OVER]:
             self.prev_frame = None
@@ -230,32 +256,6 @@ class Insula(Agent):
         if current_frame is not None:
             self._store_experience(current_frame, latest_frame)
 
-        # Train the model
-        if self._should_train_model(latest_frame):
-            buffer_size = len(self.experience_buffer)
-            if buffer_size >= self.config["min_buffer_size"]:
-                self.logger.info(
-                    f"🤖 Training DT model. Game: {self.game_id} with (buffer size: {buffer_size})"
-                )
-                train_model(
-                    model=self.pure_dt_model,
-                    optimizer=self.optimizer,
-                    experience_buffer=self.experience_buffer,
-                    config=self.config,
-                    device=self.device,
-                    writer=self.writer,
-                    logger=self.logger,
-                    game_id=self.game_id,
-                    action_counter=self.action_counter,
-                )
-            else:
-                self.logger.debug(
-                    f"Skipping training: buffer size {buffer_size} < min_buffer_size {self.config['min_buffer_size']}"
-                )
-
-        # Check level completion and perform reset
-        self._check_level_completion(latest_frame=latest_frame)
-
         # If frame processing failed, reset tracking and return a random action
         if current_frame is None:
             self.logger.info(f"Error in frame processing for Game {self.game_id}. Use randome action selection")
@@ -267,8 +267,8 @@ class Insula(Agent):
             )
             return action
 
-        # If no reset and no error, get action predictions from DT model (following bandit pattern exactly)
-        action_idx, coord_idx, selected_action = self.select_action(
+        # If no reset and no error, get action predictions from Insula model (following bandit pattern exactly)
+        action_idx, coord_idx, selected_action = self._select_action(
             latest_frame_torch=current_frame, latest_frame=latest_frame
         )
 
@@ -292,7 +292,7 @@ class Insula(Agent):
         should_train_model = (
               self.action_counter % self.train_frequency == 0 or
               latest_frame.state == GameState.GAME_OVER or
-              latest_frame.score != self.current_score
+              latest_frame.score > self.current_score
         )
         return should_train_model
 
@@ -303,13 +303,63 @@ class Insula(Agent):
             self.logger.info(f"Score changed from {self.current_score} to {latest_frame.score} for game {self.game_id} at action {self.action_counter}")
             self.logger.info(f"Game {self.game_id} reached level {latest_frame.score} at action {self.action_counter}")
 
-            # Clear experience buffer when reaching new level
+            # Clear experience buffer when reaching new level (always do this)
             self.experience_buffer.clear()
             self.prev_frame = None
             self.prev_action_idx = None
             self.current_score = latest_frame.score
 
-            #TODO: Should we reset the model as well? But retaining the model across levels may lead to better generalization
+            # Transfer Learning Strategy: Keep trained model by default
+            # Rationale: Game rules remain constant, ViT learns abstract spatial patterns
+            # that transfer across levels, Insula learns action semantics
+            #
+            # If observing overfitting or poor transfer, consider these options:
+
+            # OPTION 1: Reset only ViT encoder (relearn spatial patterns, keep Insula action knowledge)
+            # Pros: Adapts to new grid structures while preserving action semantics
+            # Cons: Loses learned spatial abstractions (symmetries, transformations)
+            # from insula_agent.models import ViTStateEncoder
+            # self.pure_dt_model.state_encoder = ViTStateEncoder(
+            #     cell_embed_dim=self.config.get("vit_cell_embed_dim", 64),
+            #     patch_size=self.config.get("vit_patch_size", 8),
+            #     num_layers=self.config.get("vit_num_layers", 4),
+            #     num_heads=self.config.get("vit_num_heads", 8),
+            #     dropout=self.config.get("vit_dropout", 0.1),
+            #     use_cls_token=self.config.get("vit_use_cls_token", True),
+            #     embed_dim=self.config["embed_dim"],
+            # ).to(self.device)
+            # # Re-register encoder parameters in optimizer
+            # self.optimizer = torch.optim.Adam(
+            #     self.pure_dt_model.parameters(),
+            #     lr=self.config["learning_rate"],
+            #     weight_decay=self.config["weight_decay"],
+            # )
+            # self.logger.info(f"🔄 Reset ViT encoder for level {latest_frame.score}")
+
+            # OPTION 2: Reduce learning rate (fine-tuning mode)
+            # Pros: Gentler adaptation to new level, preserves most learned knowledge
+            # Cons: May learn new patterns too slowly
+            # decay_factor = 0.5
+            # for param_group in self.optimizer.param_groups:
+            #     old_lr = param_group['lr']
+            #     param_group['lr'] *= decay_factor
+            #     self.logger.info(f"📉 Reduced learning rate: {old_lr:.6f} → {param_group['lr']:.6f}")
+
+            # OPTION 3: Reset optimizer state (clear momentum/Adam statistics)
+            # Pros: Removes optimization momentum from previous level's gradients
+            # Cons: Loses adaptive learning rate benefits
+            # self.optimizer = torch.optim.Adam(
+            #     self.pure_dt_model.parameters(),
+            #     lr=self.config["learning_rate"],
+            #     weight_decay=self.config["weight_decay"],
+            # )
+            # self.logger.info(f"🔄 Reset optimizer state for level {latest_frame.score}")
+
+            # OPTION 4: Full model reset (nuclear option - NOT RECOMMENDED)
+            # Only use if levels are completely independent tasks
+            # self.pure_dt_model = DecisionTransformer(...).to(self.device)
+            # self.optimizer = torch.optim.Adam(...)
+            # self.logger.info(f"🔄 Full model reset for level {latest_frame.score}")
 
 
     def _store_experience(self, current_frame: torch.Tensor, latest_frame: FrameData):
@@ -333,16 +383,16 @@ class Insula(Agent):
 
             # Log replay buffer size periodically
             self.writer.add_scalar(
-                "DTAgent/replay_buffer_size",
+                "InsulaAgent/replay_buffer_size",
                 len(self.experience_buffer),
                 self.action_counter,
             )
 
-    def select_action(
+    def _select_action(
         self, latest_frame_torch: torch.Tensor, latest_frame: FrameData
     ) -> tuple[int, int, GameAction]:
 
-        self.pure_dt_model.eval()
+        self.decision_model.eval()
         with torch.no_grad():
             # Build state-action sequence and get logits
             max_context_len = self.config["max_context_len"]
@@ -367,8 +417,8 @@ class Insula(Agent):
                     latest_frame_torch, max_context_len
                 )
 
-                # Get action logits from DT (three heads)
-                logits = self.pure_dt_model(states, actions)
+                # Get action logits from Insula (three heads)
+                logits = self.decision_model(states, actions)
                 change_logits = logits["change_logits"].squeeze(0)  # [4101]
                 completion_logits = logits["completion_logits"].squeeze(0)  # [4101]
                 gameover_logits = logits["gameover_logits"].squeeze(0)  # [4101]
@@ -382,13 +432,13 @@ class Insula(Agent):
                 if action_idx < 5:
                     # Selected ACTION1-ACTION5
                     selected_action = self.action_list[action_idx]
-                    selected_action.reasoning = "DT prediction"
+                    selected_action.reasoning = "Insula prediction"
                 else:
                     # Selected a coordinate - treat as ACTION6 (following bandit pattern exactly)
                     selected_action = GameAction.ACTION6
                     y, x = coords
                     selected_action.set_data({"x": x, "y": y})
-                    selected_action.reasoning = "DT coordinate prediction"
+                    selected_action.reasoning = "Insula coordinate prediction"
                     self.logger.info(
                         f"📍 ACTION6 selected: coordinates ({x}, {y}) -> coord_idx={coord_idx}"
                     )
