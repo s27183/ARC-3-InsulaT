@@ -29,7 +29,7 @@ DEFAULT_DT_CONFIG = {
 
     # Temporal Credit Assignment
     # TODO: experiment with/without temporal credit and with different decay rates to do A/B test
-    "temporal_credit": True, # Backward temporal credit assignment in a state/action sequence
+    "temporal_credit": False, # Backward temporal credit assignment in a state/action sequence
     "eligibility_decay": 0.8,  # Exponential decay for temporal credit (0.8 = moderate decay, 1.0 = no temporal credit)
 
     # Hierarchical Context Windows (Head-Specific)
