@@ -1,15 +1,16 @@
 """
-Pure Decision Transformer Configuration
+InsulaAgent Configuration
 
-This module provides configuration management for the Pure Decision Transformer,
-including configurable loss functions and training parameters.
+This module provides configuration management for InsulaAgent, an online supervised
+learning architecture with insular cortex-inspired multi-level integration.
+Includes configurable model architecture and training parameters.
 """
 
 import os
 from typing import Dict, Any
 
 
-# Default configuration for Pure Decision Transformer
+# Default configuration for InsulaAgent
 DEFAULT_DT_CONFIG = {
     # Model Architecture
     "embed_dim": 256,  # Transformer embedding dimension
@@ -67,6 +68,8 @@ DEFAULT_DT_CONFIG = {
     "vit_dropout": 0.1,  # ViT dropout rate
     "vit_use_cls_token": True,  # Use CLS token (True) vs global pooling (False)
     "vit_cell_embed_dim": 64,  # Dimension for learned cell embeddings (0-15)
+    "vit_pos_dim_ratio": 0.5,  # Position encoding dimension as ratio of cell_embed_dim (pos_dim = cell_embed_dim * ratio)
+    "vit_use_patch_pos_encoding": False,  # Whether to use patch-level positional encoding (redundant with cell-level)
 }
 
 # Device-specific configurations
@@ -112,7 +115,7 @@ GPU_PURE_DT_CONFIG = {
 
 
 def load_dt_config(device: str = None) -> Dict[str, Any]:
-    """Load Pure DT configuration based on device.
+    """Load InsulaAgent configuration based on device.
 
     Args:
         device: 'cpu', 'cuda', or None for auto-detection
@@ -170,7 +173,7 @@ def get_loss_config_summary(config: Dict[str, Any]) -> str:
     context = config.get("max_context_len", "unknown")
 
     summary = (
-        f"Pure DT Config: lr={lr}, epochs={epochs}, context={context}"
+        f"InsulaAgent Config: lr={lr}, epochs={epochs}, context={context}"
     )
 
     return summary
