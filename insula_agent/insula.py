@@ -476,15 +476,15 @@ class Insula(Agent):
                 if action_idx < 5:
                     # Selected ACTION1-ACTION5
                     selected_action = self.action_list[action_idx]
-                    selected_action.reasoning = "Insula prediction"
+                    selected_action.reasoning = "discrete action prediction"
                 else:
                     # Selected a coordinate - treat as ACTION6 (following bandit pattern exactly)
                     selected_action = GameAction.ACTION6
                     y, x = coords
                     selected_action.set_data({"x": x, "y": y})
-                    selected_action.reasoning = "Insula coordinate prediction"
+                    selected_action.reasoning = "coordinate action prediction"
                     self.logger.info(
-                        f"📍 ACTION6 selected: coordinates ({x}, {y}) -> coord_idx={coord_idx}"
+                        f"{self.game_id} - ACTION6: coordinates ({x}, {y}) -> coord_idx={coord_idx}"
                     )
 
         return action_idx, coord_idx, selected_action
