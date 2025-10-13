@@ -48,22 +48,23 @@ class InsulaConfig:
     vit_use_patch_pos_encoding: bool = False  # Patch-level positional encoding
 
     # Multi-Head Prediction Architecture
+    # TODO: enable/disable learned heads for ablation studies
     use_change_head: bool = True  # Always True (change head is required)
-    use_completion_head: bool = True  # Optional: predict level completion
-    use_gameover_head: bool = True  # Optional: predict GAME_OVER avoidance
+    use_completion_head: bool = False  # Optional: predict level completion
+    use_gameover_head: bool = False  # Optional: predict GAME_OVER avoidance
 
     # ============================================================================
     # TRAINING CONFIGURATION
     # ============================================================================
 
     # Optimizer Settings
+    # TODO: should we use a different learning rates for the ViT and decision models?
     learning_rate: float = 1e-4  # Adam learning rate
     weight_decay: float = 1e-5  # L2 regularization
     gradient_clip_norm: float = 1.0  # Gradient clipping norm
 
     # Training Schedule
     train_frequency: int = 5  # Train every N actions
-    batch_size: int = 16  # Batch size for training
     epochs_per_training: int = 1  # Number of epochs per training session
     min_buffer_size: int = 5  # Minimum experience buffer size to start training
 
@@ -75,13 +76,15 @@ class InsulaConfig:
     # TEMPORAL CREDIT ASSIGNMENT
     # ============================================================================
 
-    temporal_credit: bool = True  # Train on all timesteps or final only
+    # TODO: enable/disable temporal credit for ablation studies
+    temporal_tracing: bool = False  # Train on all timesteps or final only
 
     # Eligibility Decay Rates (ONLY used when temporal_credit=True)
-    use_learned_decay: bool = True  # Learn decay rates during training
-    change_eligibility_decay: float = 0.7  # Fast decay for immediate effects
-    completion_eligibility_decay: float = 0.8  # Medium decay for goal sequences
-    gameover_eligibility_decay: float = 0.9  # Slow decay for failure chains
+    # TODO: enable/disable learned decay for ablation studies
+    use_learned_decay: bool = False  # Learn decay rates during training
+    change_eligibility_decay: float = 1.0  # lower value -> Fast decay for immediate effects?
+    completion_eligibility_decay: float = 1.0  # higher value -> Medium decay for goal sequences?
+    gameover_eligibility_decay: float = 1.0  # highest value -> Slow decay for failure chains
 
     # ============================================================================
     # EXPERIENCE REPLAY
@@ -89,7 +92,6 @@ class InsulaConfig:
 
     # Buffer Management
     max_buffer_size: int = 200000  # Maximum experience buffer size
-    experience_sample_rate: float = 1.0  # Fraction of experiences to use
 
     # Head-Specific Replay Sizes (Importance-Weighted Sampling)
     change_replay_size: int = 16  # Change is frequent → small batch
@@ -140,6 +142,52 @@ class InsulaConfig:
                 f"max_context_len ({self.max_context_len})"
             )
 
+        # Validate hierarchical ordering: change < completion < gameover
+        if self.use_completion_head and self.change_context_len >= self.completion_context_len:
+            raise ValueError(
+                f"change_context_len ({self.change_context_len}) must be < "
+                f"completion_context_len ({self.completion_context_len}) for hierarchical contexts"
+            )
+
+        if self.use_gameover_head and self.change_context_len >= self.gameover_context_len:
+            raise ValueError(
+                f"change_context_len ({self.change_context_len}) must be < "
+                f"gameover_context_len ({self.gameover_context_len}) for hierarchical contexts"
+            )
+
+        # Validate eligibility decay rates (0, 1]
+        if not (0 < self.change_eligibility_decay <= 1.0):
+            raise ValueError(
+                f"change_eligibility_decay ({self.change_eligibility_decay}) must be in (0, 1]"
+            )
+
+        if not (0 < self.completion_eligibility_decay <= 1.0):
+            raise ValueError(
+                f"completion_eligibility_decay ({self.completion_eligibility_decay}) must be in (0, 1]"
+            )
+
+        if not (0 < self.gameover_eligibility_decay <= 1.0):
+            raise ValueError(
+                f"gameover_eligibility_decay ({self.gameover_eligibility_decay}) must be in (0, 1]"
+            )
+
+        # Validate replay variation rates [0.5, 1.0]
+        if not (0.5 <= self.replay_variation_min <= 1.0):
+            raise ValueError(
+                f"replay_variation_min ({self.replay_variation_min}) must be in [0.5, 1.0]"
+            )
+
+        if not (0.5 <= self.replay_variation_max <= 1.0):
+            raise ValueError(
+                f"replay_variation_max ({self.replay_variation_max}) must be in [0.5, 1.0]"
+            )
+
+        if self.replay_variation_min > self.replay_variation_max:
+            raise ValueError(
+                f"replay_variation_min ({self.replay_variation_min}) must be <= "
+                f"replay_variation_max ({self.replay_variation_max})"
+            )
+
     def summary(self) -> str:
         """Get a summary of the configuration for logging."""
         return (
@@ -166,26 +214,26 @@ def cpu_config() -> InsulaConfig:
     """Create CPU-optimized InsulaAgent configuration.
 
     Returns:
-        InsulaConfig optimized for CPU training
+        InsulaConfig optimized for CPU training (smaller for fast iteration)
     """
     return InsulaConfig(
-        # Smaller model for CPU
+        # Smaller transformer for CPU
         embed_dim=128,
         num_layers=2,
         num_heads=4,  # 128/4 = 32
-        max_context_len=150,
-        # ViT configuration for CPU
+        max_context_len=40,  # Same for CPU/GPU (positional embedding capacity)
+        # Smaller hierarchical context windows (max still ≤ 40)
+        change_context_len=5,
+        completion_context_len=10,  # 20 → 10 for faster CPU training
+        gameover_context_len=20,    # 40 → 20 for faster CPU training
+        # Smaller ViT for CPU
         vit_num_layers=2,
         vit_num_heads=4,
         vit_cell_embed_dim=32,
-        # Context lengths (same as default)
-        change_context_len=5,
-        completion_context_len=20,
-        gameover_context_len=40,
-        # Replay sizes (same as default)
-        change_replay_size=16,
-        completion_replay_size=160,
-        gameover_replay_size=16,
+        # Smaller replay sizes for faster training
+        change_replay_size=8,       # 16 → 8
+        completion_replay_size=80,  # 160 → 80
+        gameover_replay_size=8,     # 16 → 8
     )
 
 
@@ -196,23 +244,23 @@ def gpu_config() -> InsulaConfig:
         InsulaConfig optimized for GPU training
     """
     return InsulaConfig(
-        # Balanced GPU config (same as default for most params)
+        # Transformer architecture (current proven default)
         embed_dim=256,
         num_layers=4,
         num_heads=8,
-        max_context_len=300,
-        # ViT configuration for GPU
+        max_context_len=40,  # Same for CPU/GPU (positional embedding capacity)
+        # Hierarchical context windows
+        change_context_len=5,
+        completion_context_len=20,
+        gameover_context_len=40,  # = max_context_len
+        # ViT architecture
         vit_num_layers=4,
         vit_num_heads=8,
         vit_cell_embed_dim=64,
-        # Context lengths (same as default)
-        change_context_len=5,
-        completion_context_len=20,
-        gameover_context_len=40,
-        # Larger replay sizes for GPU
-        change_replay_size=32,
-        completion_replay_size=320,
-        gameover_replay_size=32,
+        # Replay sizes (importance-weighted sampling)
+        change_replay_size=16,
+        completion_replay_size=160,
+        gameover_replay_size=16,
     )
 
 
