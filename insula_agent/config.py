@@ -16,7 +16,7 @@ DEFAULT_DT_CONFIG = {
     "embed_dim": 256,  # Transformer embedding dimension
     "num_layers": 4,  # Number of transformer layers
     "num_heads": 8,  # Number of attention heads
-    "max_context_len": 300,  # Maximum positional embedding capacity (must be >= longest head-specific context)
+    "max_context_len": 40,  # Maximum positional embedding capacity (must be >= longest head-specific context)
 
     # Training Parameters
     "learning_rate": 1e-4,  # Adam learning rate
@@ -34,9 +34,12 @@ DEFAULT_DT_CONFIG = {
     "eligibility_decay": 0.8,  # Exponential decay for temporal credit (0.8 = moderate decay, 1.0 = no temporal credit)
 
     # Hierarchical Context Windows (Head-Specific)
-    "change_context_len": 5,  # Context length for change head (immediate effects)
-    "completion_context_len": 50,  # Context length for completion head (goal sequences)
-    "gameover_context_len": 100,  # Context length for GAME_OVER head (failure causal chains)
+    # Note: Context length determines temporal credit assignment window (how far back to look)
+    # Effective context ≈ -ln(0.01)/ln(γ) where γ is eligibility_decay
+    # Design principle: Match context_len to effective context (95-100% coverage for efficiency)
+    "change_context_len": 5,   # Immediate effects (γ=0.7 → ~13-step effective, 38% coverage - tight for speed)
+    "completion_context_len": 20,  # Goal sequences (γ=0.8 → ~21-step effective, 95% coverage)
+    "gameover_context_len": 40,    # Failure chains (γ=0.9 → ~44-step effective, 91% coverage)
 
     # Head-Specific Eligibility Decay (for temporal credit assignment)
     "use_learned_decay": False,  # Toggle learned vs fixed decay rates
@@ -45,9 +48,11 @@ DEFAULT_DT_CONFIG = {
     "gameover_eligibility_decay": 0.9,  # Slow decay for long causal chains (init value if learned)
 
     # Importance-Weighted Replay (Head-Specific Replay Sizes)
-    "change_replay_size": 16,  # Number of change sequences per training round
-    "completion_replay_size": 160,  # Number of completion sequences per training round
-    "gameover_replay_size": 160,  # Number of GAME_OVER sequences per training round
+    # NOTE: Replay size = batch size (how many sequences to sample per training round)
+    # Rationale based on event frequency AND buffer persistence:
+    "change_replay_size": 16,  # Change is frequent (50-70% of actions) → small batch
+    "completion_replay_size": 160,  # Completion is rare (1 per level) AND buffer clears immediately → large batch to maximize learning before buffer clears
+    "gameover_replay_size": 16,  # GAME_OVER is moderately frequent (10-30%) AND persists in buffer across multiple training rounds → small batch to avoid oversampling same failures
 
     # Replay Variation (for completion and GAME_OVER sequences)
     "replay_variation_min": 0.5,  # Minimum variation factor (80% of target length)
@@ -89,14 +94,14 @@ CPU_PURE_DT_CONFIG = {
     "vit_num_heads": 4,  # Fewer attention heads for CPU (128/4 = 32)
     "vit_patch_size": 8,  # Keep patch size same
     "vit_cell_embed_dim": 32,  # Smaller cell embeddings for CPU
-    # Hierarchical context for CPU (shorter windows)
+    # Hierarchical context for CPU (same as DEFAULT)
     "change_context_len": 5,
-    "completion_context_len": 50,
-    "gameover_context_len": 100,
+    "completion_context_len": 20,
+    "gameover_context_len": 40,
     # Smaller replay sizes for CPU
     "change_replay_size": 16,
     "completion_replay_size": 160,
-    "gameover_replay_size": 160,
+    "gameover_replay_size": 16,  # Match change_replay_size (see rationale in DEFAULT_DT_CONFIG)
 }
 
 GPU_PURE_DT_CONFIG = {
@@ -115,12 +120,12 @@ GPU_PURE_DT_CONFIG = {
     "vit_cell_embed_dim": 64,  # Same as DEFAULT (2× CPU)
     # Hierarchical context for GPU (same as DEFAULT)
     "change_context_len": 5,
-    "completion_context_len": 50,
-    "gameover_context_len": 100,
+    "completion_context_len": 20,
+    "gameover_context_len": 40,
     # Replay sizes for GPU (modest increase from CPU)
     "change_replay_size": 32,  # 2× CPU
     "completion_replay_size": 320,  # 2× CPU
-    "gameover_replay_size": 320,  # 2× CPU
+    "gameover_replay_size": 32,  # Match change_replay_size scaling (2× CPU, see rationale in DEFAULT_DT_CONFIG)
 }
 
 
