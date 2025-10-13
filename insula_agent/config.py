@@ -75,10 +75,10 @@ class InsulaConfig:
     # TEMPORAL CREDIT ASSIGNMENT
     # ============================================================================
 
-    temporal_credit: bool = False  # Train on all timesteps or final only
+    temporal_credit: bool = True  # Train on all timesteps or final only
 
     # Eligibility Decay Rates (ONLY used when temporal_credit=True)
-    use_learned_decay: bool = False  # Learn decay rates during training
+    use_learned_decay: bool = True  # Learn decay rates during training
     change_eligibility_decay: float = 0.7  # Fast decay for immediate effects
     completion_eligibility_decay: float = 0.8  # Medium decay for goal sequences
     gameover_eligibility_decay: float = 0.9  # Slow decay for failure chains
