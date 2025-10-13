@@ -49,7 +49,7 @@ from torch.utils.tensorboard import SummaryWriter
 from agents.agent import Agent
 from agents.structs import FrameData, GameAction, GameState
 
-from insula_agent.config import load_dt_config, validate_config
+from insula_agent.config import load_config
 from insula_agent.models import DecisionModel
 from insula_agent.trainer import train_model
 from insula_agent.utils import setup_logging
@@ -103,31 +103,30 @@ class Insula(Agent):
         self.logger.info(f"Insula Agent using device: {self.device}")
 
         # Model initialization
-        self.config = load_dt_config(device=str(self.device))
-        validate_config(self.config)
+        self.config = load_config(device=str(self.device))
 
         self.decision_model = DecisionModel(
-            embed_dim=self.config["embed_dim"],
-            num_layers=self.config["num_layers"],
-            num_heads=self.config["num_heads"],
-            max_context_len=self.config["max_context_len"],
+            embed_dim=self.config.embed_dim,
+            num_layers=self.config.num_layers,
+            num_heads=self.config.num_heads,
+            max_context_len=self.config.max_context_len,
             # ViT encoder parameters
-            vit_cell_embed_dim=self.config.get("vit_cell_embed_dim", 64),
-            vit_patch_size=self.config.get("vit_patch_size", 8),
-            vit_num_layers=self.config.get("vit_num_layers", 4),
-            vit_num_heads=self.config.get("vit_num_heads", 8),
-            vit_dropout=self.config.get("vit_dropout", 0.1),
-            vit_use_cls_token=self.config.get("vit_use_cls_token", True),
-            vit_pos_dim_ratio=self.config.get("vit_pos_dim_ratio", 0.5),
-            vit_use_patch_pos_encoding=self.config.get("vit_use_patch_pos_encoding", False),
+            vit_cell_embed_dim=self.config.vit_cell_embed_dim,
+            vit_patch_size=self.config.vit_patch_size,
+            vit_num_layers=self.config.vit_num_layers,
+            vit_num_heads=self.config.vit_num_heads,
+            vit_dropout=self.config.vit_dropout,
+            vit_use_cls_token=self.config.vit_use_cls_token,
+            vit_pos_dim_ratio=self.config.vit_pos_dim_ratio,
+            vit_use_patch_pos_encoding=self.config.vit_use_patch_pos_encoding,
             # Head configuration
-            use_completion_head=self.config.get("use_completion_head", True),
-            use_gameover_head=self.config.get("use_gameover_head", True),
+            use_completion_head=self.config.use_completion_head,
+            use_gameover_head=self.config.use_gameover_head,
             # Learned decay configuration
-            use_learned_decay=self.config.get("use_learned_decay", False),
-            change_decay_init=self.config.get("change_eligibility_decay", 0.7),
-            completion_decay_init=self.config.get("completion_eligibility_decay", 0.8),
-            gameover_decay_init=self.config.get("gameover_eligibility_decay", 0.9),
+            use_learned_decay=self.config.use_learned_decay,
+            change_decay_init=self.config.change_eligibility_decay,
+            completion_decay_init=self.config.completion_eligibility_decay,
+            gameover_decay_init=self.config.gameover_eligibility_decay,
         ).to(self.device)
 
         # Set model to eval mode for inference (returns 2D logits [batch, 4101])
@@ -136,8 +135,8 @@ class Insula(Agent):
 
         self.optimizer = torch.optim.Adam(
             self.decision_model.parameters(),
-            lr=self.config["learning_rate"],
-            weight_decay=self.config["weight_decay"],
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay,
         )
 
         # Grid info
@@ -149,8 +148,8 @@ class Insula(Agent):
         self.current_score = 0
 
         # Experience buffer for training
-        self.experience_buffer = deque(maxlen=self.config["max_buffer_size"])
-        self.train_frequency = self.config["train_frequency"]
+        self.experience_buffer = deque(maxlen=self.config.max_buffer_size)
+        self.train_frequency = self.config.train_frequency
 
         # Game state and action mapping
         self.prev_frame = None
@@ -227,7 +226,7 @@ class Insula(Agent):
         # Train the model
         if self._should_train_model(latest_frame):
             buffer_size = len(self.experience_buffer)
-            if buffer_size >= self.config["min_buffer_size"]:
+            if buffer_size >= self.config.min_buffer_size:
                 self.logger.info(
                     f"🤖 Training Insula model. Game: {self.game_id} with (buffer size: {buffer_size})"
                 )
@@ -244,7 +243,7 @@ class Insula(Agent):
                 )
             else:
                 self.logger.debug(
-                    f"Skipping training: buffer size {buffer_size} < min_buffer_size {self.config['min_buffer_size']}"
+                    f"Skipping training: buffer size {buffer_size} < min_buffer_size {self.config.min_buffer_size}"
                 )
 
         # Check level completion
@@ -409,7 +408,7 @@ class Insula(Agent):
         self.decision_model.eval()
         with torch.no_grad():
             # Build state-action sequence and get logits
-            max_context_len = self.config["max_context_len"]
+            max_context_len = self.config.max_context_len
 
             # Cold start - random valid action if no experience
             if len(self.experience_buffer) < 1:
@@ -419,11 +418,9 @@ class Insula(Agent):
                 # Set default values for tracking
                 if selected_action.value <= 5:
                     action_idx = selected_action.value - 1
-                    coords = None
                     coord_idx = None
                 else:
                     action_idx = 5
-                    coords = (0, 0)
                     coord_idx = 0
             else:
                 # Build state-action sequence for inference
@@ -618,10 +615,10 @@ class Insula(Agent):
             action.reasoning = "Random action (no constraints available)"
             return action
 
-    def _build_inference_sequence(self, current_frame, max_context_len):
+    def _build_inference_sequence(self, current_frame, context_len):
         """Build state-action sequence for Decision Transformer inference."""
         # Get recent experiences up to max context length
-        available_context = min(int(max_context_len), len(self.experience_buffer))
+        available_context = min(int(context_len), len(self.experience_buffer))
         recent_experiences = (
             list(self.experience_buffer)[-available_context:]
             if available_context > 0
