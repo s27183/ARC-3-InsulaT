@@ -50,7 +50,7 @@ from agents.agent import Agent
 from agents.structs import FrameData, GameAction, GameState
 
 from insula_agent.config import load_dt_config, validate_config
-from insula_agent.models import DecisionTransformer
+from insula_agent.models import DecisionModel
 from insula_agent.trainer import train_model
 from insula_agent.utils import setup_logging
 
@@ -106,7 +106,7 @@ class Insula(Agent):
         self.config = load_dt_config(device=str(self.device))
         validate_config(self.config)
 
-        self.decision_model = DecisionTransformer(
+        self.decision_model = DecisionModel(
             embed_dim=self.config["embed_dim"],
             num_layers=self.config["num_layers"],
             num_heads=self.config["num_heads"],
@@ -122,6 +122,10 @@ class Insula(Agent):
             use_completion_head=self.config.get("use_completion_head", True),
             use_gameover_head=self.config.get("use_gameover_head", True),
         ).to(self.device)
+
+        # Set model to eval mode for inference (returns 2D logits [batch, 4101])
+        # Training mode is set in trainer.py (returns 3D logits [batch, seq_len+1, 4101])
+        self.decision_model.eval()
 
         self.optimizer = torch.optim.Adam(
             self.decision_model.parameters(),

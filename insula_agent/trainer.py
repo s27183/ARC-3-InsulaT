@@ -323,16 +323,18 @@ def compute_head_loss_with_temporal_credit(
     eligibility_decay: float,
     config: dict[str, Any],
 ) -> torch.Tensor:
-    """Compute loss for a single head with temporal credit assignment.
+    """Compute loss for a single head with per-timestep predictions and temporal credit assignment.
 
-    This is the main loss function used in hierarchical training.
+    Implements continuous forward modeling: each state's prediction is evaluated against its action.
+    This matches hippocampal replay where all moments in a sequence get reactivated and updated.
+
     Each head (change/completion/gameover) has its own eligibility decay rate.
     Includes diversity regularization to encourage exploration.
 
     Args:
-        logits: [batch, 4101] - Predicted logits for this head
-        all_action_indices: [batch, seq_len] - ALL actions in sequence
-        all_rewards: [batch, seq_len] - Rewards for this head (1.0 or 0.0)
+        logits: [batch, seq_len+1, 4101] - Predicted logits at each state (training mode)
+        all_action_indices: [batch, seq_len+1] - ALL actions in sequence
+        all_rewards: [batch, seq_len+1] - Rewards for this head (1.0 or 0.0)
         eligibility_decay: Head-specific decay rate (0.7, 0.8, or 0.9)
         config: Configuration dictionary with:
             - "action_entropy_coeff": float (default 0.0001)
@@ -342,14 +344,17 @@ def compute_head_loss_with_temporal_credit(
         loss: Scalar loss tensor with diversity regularization
     """
     batch_size = logits.shape[0]
-    seq_len = all_action_indices.shape[1]
+    seq_len = all_action_indices.shape[1]  # seq_len+1 states
 
     # Accumulate weighted losses
     total_loss = 0.0
     total_weight = 0.0
 
-    # Loop through sequence - gather() for each action
+    # Loop through sequence - extract logits for each timestep
     for t in range(seq_len):
+        # Extract logits for timestep t (state t's prediction)
+        logits_t = logits[:, t, :]  # [batch, 4101]
+
         # Compute eligibility weight (exponential decay from end)
         steps_from_end = seq_len - 1 - t
         time_weight = eligibility_decay ** steps_from_end
@@ -358,7 +363,7 @@ def compute_head_loss_with_temporal_credit(
         action_t = all_action_indices[:, t]  # [batch]
 
         # Use gather() to select logits for THIS action
-        selected_logits_t = logits.gather(
+        selected_logits_t = logits_t.gather(
             dim=1, index=action_t.unsqueeze(1)
         ).squeeze(1)  # [batch]
 
@@ -379,8 +384,9 @@ def compute_head_loss_with_temporal_credit(
     # Normalize by cumulative weight
     bce_loss = total_loss / total_weight
 
-    # Add action diversity regularization (same as compute_head_loss)
-    probs = torch.sigmoid(logits)  # [batch, 4101]
+    # Add action diversity regularization (use final timestep logits)
+    final_logits = logits[:, -1, :]  # [batch, 4101]
+    probs = torch.sigmoid(final_logits)
 
     # Split into action and coordinate spaces
     action_probs = probs[:, :5]      # [batch, 5]
@@ -452,11 +458,11 @@ def train_head_batch(
     else:
         raise ValueError(f"Unknown head_type: {head_type}")
 
-    # Forward pass
+    # Forward pass (model in training mode returns per-timestep predictions)
     logits_dict = model(states_batch, actions_batch)
 
-    # Extract logits for this head
-    head_logits = logits_dict[f"{head_type}_logits"]  # [B, 4101]
+    # Extract logits for this head (3D: predictions at all states)
+    head_logits = logits_dict[f"{head_type}_logits"]  # [B, seq_len+1, 4101]
 
     # Compute loss based on temporal_credit config
     if config.get("temporal_credit", True):
