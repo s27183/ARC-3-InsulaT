@@ -504,7 +504,7 @@ def train_model(
     game_id: str,
     action_counter: int,
 ) -> None:
-    """Train DT with hierarchical context windows and gradient accumulation.
+    """Train Insula with hierarchical context windows and gradient accumulation.
 
     Args:
         model: DecisionTransformer model to train
@@ -524,9 +524,20 @@ def train_model(
         return None
 
     # === STEP 1: Create head-specific sequences ===
+    # Always create change sequences (required)
     change_sequences = create_change_sequences(experience_buffer, config)
-    completion_sequences = create_completion_sequences(experience_buffer, config)
-    gameover_sequences = create_gameover_sequences(experience_buffer, config)
+
+    # Conditionally create completion sequences (optional)
+    if config.get("use_completion_head", True):
+        completion_sequences = create_completion_sequences(experience_buffer, config)
+    else:
+        completion_sequences = []
+
+    # Conditionally create gameover sequences (optional)
+    if config.get("use_gameover_head", True):
+        gameover_sequences = create_gameover_sequences(experience_buffer, config)
+    else:
+        gameover_sequences = []
 
     # Skip training if no sequences
     if not change_sequences and not completion_sequences and not gameover_sequences:
@@ -543,7 +554,7 @@ def train_model(
     total_sequences = len(change_sequences) + len(completion_sequences) + len(gameover_sequences)
     num_batches = len(change_batches) + len(completion_batches) + len(gameover_batches)
     logger.info(
-        f"🎯 Starting DT training. Game: {game_id}. "
+        f"🎯 Starting Insula training. Game: {game_id}. "
         f"{total_sequences} sequences ({len(change_sequences)} change, "
         f"{len(completion_sequences)} completion, {len(gameover_sequences)} gameover) "
         f"→ {num_batches} batches"
@@ -604,11 +615,11 @@ def train_model(
             accumulated_metrics["gameover_loss"]
         ) / max(accumulated_metrics["num_batches"], 1)
 
-        log_hierarchical_dt_metrics(writer, accumulated_metrics, action_counter)
+        log_hierarchical_dt_metrics(writer, accumulated_metrics, action_counter, config)
 
     # Log completion
     logger.info(
-        f"✅ DT training completed. Game: {game_id}. "
+        f"✅ Insula training completed. Game: {game_id}. "
         f"loss={accumulated_metrics['total_loss']:.4f}"
     )
 
@@ -624,6 +635,7 @@ def log_hierarchical_dt_metrics(
     writer: SummaryWriter,
     metrics: dict[str, float],
     action_counter: int,
+    config: dict[str, Any] = None,
 ) -> None:
     """Log hierarchical training metrics to tensorboard.
 
@@ -636,18 +648,25 @@ def log_hierarchical_dt_metrics(
             - "completion_loss": float (optional)
             - "gameover_loss": float (optional)
         action_counter: Current action count for x-axis
+        config: Configuration dictionary (for checking enabled heads)
 
     Returns:
         None
     """
     # Log overall metrics
-    writer.add_scalar("DTAgent/total_loss", metrics["total_loss"], action_counter)
-    writer.add_scalar("DTAgent/num_batches", metrics["num_batches"], action_counter)
+    writer.add_scalar("InsulaAgent/total_loss", metrics["total_loss"], action_counter)
+    writer.add_scalar("InsulaAgent/num_batches", metrics["num_batches"], action_counter)
 
-    # Log head-specific losses
-    if metrics["change_loss"] > 0:
-        writer.add_scalar("DTAgent/change_loss", metrics["change_loss"], action_counter)
-    if metrics["completion_loss"] > 0:
-        writer.add_scalar("DTAgent/completion_loss", metrics["completion_loss"], action_counter)
-    if metrics["gameover_loss"] > 0:
-        writer.add_scalar("DTAgent/gameover_loss", metrics["gameover_loss"], action_counter)
+    # Log head-specific losses (always log change, conditionally log others)
+    if metrics.get("change_loss", 0) > 0:
+        writer.add_scalar("InsulaAgent/change_loss", metrics["change_loss"], action_counter)
+
+    # Only log completion loss if completion head is enabled
+    if config and config.get("use_completion_head", True):
+        if metrics.get("completion_loss", 0) > 0:
+            writer.add_scalar("InsulaAgent/completion_loss", metrics["completion_loss"], action_counter)
+
+    # Only log gameover loss if gameover head is enabled
+    if config and config.get("use_gameover_head", True):
+        if metrics.get("gameover_loss", 0) > 0:
+            writer.add_scalar("InsulaAgent/gameover_loss", metrics["gameover_loss"], action_counter)

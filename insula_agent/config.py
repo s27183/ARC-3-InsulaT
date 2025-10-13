@@ -70,6 +70,11 @@ DEFAULT_DT_CONFIG = {
     "vit_cell_embed_dim": 64,  # Dimension for learned cell embeddings (0-15)
     "vit_pos_dim_ratio": 0.5,  # Position encoding dimension as ratio of cell_embed_dim (pos_dim = cell_embed_dim * ratio)
     "vit_use_patch_pos_encoding": False,  # Whether to use patch-level positional encoding (redundant with cell-level)
+
+    # Head Configuration (Triple-Head Architecture)
+    "use_change_head": True,        # Always True (change head is required baseline)
+    "use_completion_head": True,    # Optional: predict level completion (goal-oriented)
+    "use_gameover_head": True,      # Optional: predict GAME_OVER avoidance (safety-aware)
 }
 
 # Device-specific configurations
@@ -204,24 +209,44 @@ def validate_config(config: Dict[str, Any]) -> bool:
     if config["embed_dim"] % config["num_heads"] != 0:
         raise ValueError("embed_dim must be divisible by num_heads")
 
-    # Validate hierarchical context lengths respect max_context_len constraint
-    max_context = config["max_context_len"]
-    change_context = config.get("change_context_len", 0)
-    completion_context = config.get("completion_context_len", 0)
-    gameover_context = config.get("gameover_context_len", 0)
+    # Validate head configuration
+    use_change = config.get("use_change_head", True)
+    use_completion = config.get("use_completion_head", True)
+    use_gameover = config.get("use_gameover_head", True)
 
+    # Change head must always be enabled (it's the baseline)
+    if not use_change:
+        raise ValueError("use_change_head must be True (change head is required)")
+
+    # At least one head must be enabled
+    if not (use_change or use_completion or use_gameover):
+        raise ValueError("At least one prediction head must be enabled")
+
+    # Validate hierarchical context lengths only for enabled heads
+    max_context = config["max_context_len"]
+
+    # Always validate change context (required head)
+    change_context = config.get("change_context_len", 0)
     if change_context > max_context:
         raise ValueError(
             f"change_context_len ({change_context}) exceeds max_context_len ({max_context})"
         )
-    if completion_context > max_context:
-        raise ValueError(
-            f"completion_context_len ({completion_context}) exceeds max_context_len ({max_context})"
-        )
-    if gameover_context > max_context:
-        raise ValueError(
-            f"gameover_context_len ({gameover_context}) exceeds max_context_len ({max_context})"
-        )
+
+    # Only validate completion context if completion head is enabled
+    if use_completion:
+        completion_context = config.get("completion_context_len", 0)
+        if completion_context > max_context:
+            raise ValueError(
+                f"completion_context_len ({completion_context}) exceeds max_context_len ({max_context})"
+            )
+
+    # Only validate gameover context if gameover head is enabled
+    if use_gameover:
+        gameover_context = config.get("gameover_context_len", 0)
+        if gameover_context > max_context:
+            raise ValueError(
+                f"gameover_context_len ({gameover_context}) exceeds max_context_len ({max_context})"
+            )
 
     return True
 

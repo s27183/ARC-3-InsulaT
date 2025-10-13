@@ -118,6 +118,9 @@ class Insula(Agent):
             vit_num_heads=self.config.get("vit_num_heads", 8),
             vit_dropout=self.config.get("vit_dropout", 0.1),
             vit_use_cls_token=self.config.get("vit_use_cls_token", True),
+            # Head configuration
+            use_completion_head=self.config.get("use_completion_head", True),
+            use_gameover_head=self.config.get("use_gameover_head", True),
         ).to(self.device)
 
         self.optimizer = torch.optim.Adam(
@@ -417,13 +420,23 @@ class Insula(Agent):
                     latest_frame_torch, max_context_len
                 )
 
-                # Get action logits from Insula (three heads)
+                # Get action logits from Insula (variable number of heads)
                 logits = self.decision_model(states, actions)
-                change_logits = logits["change_logits"].squeeze(0)  # [4101]
-                completion_logits = logits["completion_logits"].squeeze(0)  # [4101]
-                gameover_logits = logits["gameover_logits"].squeeze(0)  # [4101]
 
-                # Sample from combined action space (multiplicative combination with three heads)
+                # Always get change logits (required)
+                change_logits = logits["change_logits"].squeeze(0)  # [4101]
+
+                # Conditionally get completion logits (optional)
+                completion_logits = None
+                if "completion_logits" in logits:
+                    completion_logits = logits["completion_logits"].squeeze(0)  # [4101]
+
+                # Conditionally get gameover logits (optional)
+                gameover_logits = None
+                if "gameover_logits" in logits:
+                    gameover_logits = logits["gameover_logits"].squeeze(0)  # [4101]
+
+                # Sample from combined action space (multiplicative combination with variable heads)
                 action_idx, coords, coord_idx = self._sample_action(
                     change_logits, completion_logits, gameover_logits, latest_frame.available_actions
                 )
@@ -448,16 +461,16 @@ class Insula(Agent):
     def _sample_action(
         self,
         change_logits: torch.Tensor,
-        completion_logits: torch.Tensor,
-        gameover_logits: torch.Tensor,
+        completion_logits: torch.Tensor | None,  # Can be None if head disabled
+        gameover_logits: torch.Tensor | None,    # Can be None if head disabled
         available_actions=None,
     ) -> tuple[int, tuple | None, int | None]:
-        """Sample from combined action space using multiplicative combination of three heads.
+        """Sample from combined action space using multiplicative combination of variable heads.
 
         Args:
-            change_logits: [4101] - Logits for predicting frame changes
-            completion_logits: [4101] - Logits for predicting level completion
-            gameover_logits: [4101] - Logits for predicting GAME_OVER (inverted for avoidance)
+            change_logits: [4101] - Logits for predicting frame changes (always present)
+            completion_logits: [4101] or None - Logits for predicting level completion (optional)
+            gameover_logits: [4101] or None - Logits for predicting GAME_OVER (optional, inverted for avoidance)
             available_actions: List of available actions for masking
 
         Returns:
@@ -465,13 +478,25 @@ class Insula(Agent):
             coords: Coordinates if ACTION6 selected
             coord_idx: Flattened coordinate index
         """
-        # Split logits into action (first 5) and coordinate (remaining 4096) spaces
+        # Split change logits (always present)
         change_action_logits = change_logits[:5]  # [5]
         change_coord_logits = change_logits[5:]  # [4096]
-        completion_action_logits = completion_logits[:5]  # [5]
-        completion_coord_logits = completion_logits[5:]  # [4096]
-        gameover_action_logits = gameover_logits[:5]  # [5]
-        gameover_coord_logits = gameover_logits[5:]  # [4096]
+
+        # Split completion logits if present
+        if completion_logits is not None:
+            completion_action_logits = completion_logits[:5]  # [5]
+            completion_coord_logits = completion_logits[5:]  # [4096]
+        else:
+            completion_action_logits = None
+            completion_coord_logits = None
+
+        # Split gameover logits if present
+        if gameover_logits is not None:
+            gameover_action_logits = gameover_logits[:5]  # [5]
+            gameover_coord_logits = gameover_logits[5:]  # [4096]
+        else:
+            gameover_action_logits = None
+            gameover_coord_logits = None
 
         # Apply masking based on available_actions if provided
         if available_actions is not None and len(available_actions) > 0:
@@ -488,51 +513,69 @@ class Insula(Agent):
                 elif action_id == 6:  # ACTION6
                     action6_available = True
 
-            # Apply mask to all three heads' action logits
+            # Apply mask to change head (always present)
             change_action_logits = change_action_logits + action_mask
-            completion_action_logits = completion_action_logits + action_mask
-            gameover_action_logits = gameover_action_logits + action_mask
+
+            # Apply mask to completion head if present
+            if completion_action_logits is not None:
+                completion_action_logits = completion_action_logits + action_mask
+
+            # Apply mask to gameover head if present
+            if gameover_action_logits is not None:
+                gameover_action_logits = gameover_action_logits + action_mask
 
             # If ACTION6 (coordinate action) is not available, mask all coordinate logits
             if not action6_available:
                 coord_mask = torch.full_like(change_coord_logits, float("-inf"))
                 change_coord_logits = change_coord_logits + coord_mask
-                completion_coord_logits = completion_coord_logits + coord_mask
-                gameover_coord_logits = gameover_coord_logits + coord_mask
 
-        # Apply sigmoid to convert logits to probabilities
+                if completion_coord_logits is not None:
+                    completion_coord_logits = completion_coord_logits + coord_mask
+
+                if gameover_coord_logits is not None:
+                    gameover_coord_logits = gameover_coord_logits + coord_mask
+
+        # Apply sigmoid to convert logits to probabilities (change head always present)
         change_action_probs = torch.sigmoid(change_action_logits)  # [5]
-        completion_action_probs = torch.sigmoid(completion_action_logits)  # [5]
-        gameover_action_probs = torch.sigmoid(gameover_action_logits)  # [5]
         change_coord_probs = torch.sigmoid(change_coord_logits)  # [4096]
-        completion_coord_probs = torch.sigmoid(completion_coord_logits)  # [4096]
-        gameover_coord_probs = torch.sigmoid(gameover_coord_logits)  # [4096]
 
         # For fair sampling: treat coordinates as one action type with total prob divided by 4096
         change_coord_probs_scaled = change_coord_probs / self.num_coordinates
-        completion_coord_probs_scaled = completion_coord_probs / self.num_coordinates
-        gameover_coord_probs_scaled = gameover_coord_probs / self.num_coordinates
 
-        # Combine action and coordinate probabilities for each head
+        # Combine action and coordinate probabilities for change head
         change_probs_sampling = torch.cat([change_action_probs, change_coord_probs_scaled])  # [4101]
         change_probs_sampling = change_probs_sampling / change_probs_sampling.sum()
 
-        completion_probs_sampling = torch.cat([completion_action_probs, completion_coord_probs_scaled])  # [4101]
-        completion_probs_sampling = completion_probs_sampling / completion_probs_sampling.sum()
+        # Start with change head probabilities (always present)
+        probs_sampling = change_probs_sampling  # [4101]
 
-        gameover_probs_sampling = torch.cat([gameover_action_probs, gameover_coord_probs_scaled])  # [4101]
-        gameover_probs_sampling = gameover_probs_sampling / gameover_probs_sampling.sum()
+        # Multiply by completion head probabilities if available
+        if completion_action_logits is not None:
+            completion_action_probs = torch.sigmoid(completion_action_logits)  # [5]
+            completion_coord_probs = torch.sigmoid(completion_coord_logits)  # [4096]
+            completion_coord_probs_scaled = completion_coord_probs / self.num_coordinates
 
-        # CRITICAL: Invert gameover probabilities for avoidance (1.0 - p)
-        # gameover_probs predicts "will cause GAME_OVER", we want to AVOID those actions
-        gameover_probs_sampling_inverted = 1.0 - gameover_probs_sampling + 1e-10  # [4101]
+            completion_probs_sampling = torch.cat([completion_action_probs, completion_coord_probs_scaled])  # [4101]
+            completion_probs_sampling = completion_probs_sampling / completion_probs_sampling.sum()
 
-        # Multiplicative combination: change * completion * (1 - gameover)
-        probs_sampling = (
-            change_probs_sampling *
-            completion_probs_sampling *
-            gameover_probs_sampling_inverted
-        )  # [4101]
+            # Multiplicative combination
+            probs_sampling = probs_sampling * completion_probs_sampling  # [4101]
+
+        # Multiply by inverted gameover head probabilities if available
+        if gameover_action_logits is not None:
+            gameover_action_probs = torch.sigmoid(gameover_action_logits)  # [5]
+            gameover_coord_probs = torch.sigmoid(gameover_coord_logits)  # [4096]
+            gameover_coord_probs_scaled = gameover_coord_probs / self.num_coordinates
+
+            gameover_probs_sampling = torch.cat([gameover_action_probs, gameover_coord_probs_scaled])  # [4101]
+            gameover_probs_sampling = gameover_probs_sampling / gameover_probs_sampling.sum()
+
+            # CRITICAL: Invert gameover probabilities for avoidance (1.0 - p)
+            # gameover_probs predicts "will cause GAME_OVER", we want to AVOID those actions
+            gameover_probs_sampling_inverted = 1.0 - gameover_probs_sampling + 1e-10  # [4101]
+
+            # Multiplicative combination
+            probs_sampling = probs_sampling * gameover_probs_sampling_inverted  # [4101]
 
         # Renormalize after multiplication (to ensure sum=1.0 for np.random.choice)
         probs_sampling = probs_sampling / probs_sampling.sum()

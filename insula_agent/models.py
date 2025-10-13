@@ -257,6 +257,7 @@ class ViTStateEncoder(nn.Module):
 
         return patches
 
+
     def _embed_and_aggregate_patches(
         self, patches: torch.Tensor, pos_encodings: torch.Tensor
     ) -> torch.Tensor:
@@ -381,8 +382,14 @@ class DecisionTransformer(nn.Module):
         vit_use_cls_token=True,
         vit_pos_dim_ratio=0.5,  # Cell position encoding dimension ratio
         vit_use_patch_pos_encoding=False,  # Whether to use patch-level positional encoding
+        # Head configuration
+        use_completion_head=True,  # Whether to use completion prediction head
+        use_gameover_head=True,    # Whether to use GAME_OVER prediction head
     ):
         super().__init__()
+
+        self.use_completion_head = use_completion_head
+        self.use_gameover_head = use_gameover_head
 
         # Component modules - Use ViT State Encoder with insular-inspired cell integration
         self.state_encoder = ViTStateEncoder(
@@ -434,41 +441,45 @@ class DecisionTransformer(nn.Module):
             nn.Linear(embed_dim // 2, 4096),  # 64x64 coordinates
         )
 
-        # Action head for predicting level completion caused by discrete actions (ACTION1-5)
-        self.completion_action_head = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim, embed_dim // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(embed_dim // 2, 5),
-        )
+        # Completion head (optional: predict level completion)
+        if self.use_completion_head:
+            # Action head for predicting level completion caused by discrete actions (ACTION1-5)
+            self.completion_action_head = nn.Sequential(
+                nn.LayerNorm(embed_dim),
+                nn.Linear(embed_dim, embed_dim // 2),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(embed_dim // 2, 5),
+            )
 
-        # Coordinate head for predicting level completion caused by spatial actions (64x64 coordinates)
-        self.completion_coord_head = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim, embed_dim // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(embed_dim // 2, 4096),
-        )
+            # Coordinate head for predicting level completion caused by spatial actions (64x64 coordinates)
+            self.completion_coord_head = nn.Sequential(
+                nn.LayerNorm(embed_dim),
+                nn.Linear(embed_dim, embed_dim // 2),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(embed_dim // 2, 4096),
+            )
 
-        # Action head for predicting GAME_OVER caused by discrete actions (ACTION1-5)
-        self.gameover_action_head = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim, embed_dim // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(embed_dim // 2, 5),  # ACTION1-5
-        )
+        # GAME_OVER head (optional: predict GAME_OVER avoidance)
+        if self.use_gameover_head:
+            # Action head for predicting GAME_OVER caused by discrete actions (ACTION1-5)
+            self.gameover_action_head = nn.Sequential(
+                nn.LayerNorm(embed_dim),
+                nn.Linear(embed_dim, embed_dim // 2),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(embed_dim // 2, 5),  # ACTION1-5
+            )
 
-        # Coordinate head for predicting GAME_OVER caused by spatial actions (64x64 coordinates)
-        self.gameover_coord_head = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim, embed_dim // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(embed_dim // 2, 4096),  # 64x64 coordinates
-        )
+            # Coordinate head for predicting GAME_OVER caused by spatial actions (64x64 coordinates)
+            self.gameover_coord_head = nn.Sequential(
+                nn.LayerNorm(embed_dim),
+                nn.Linear(embed_dim, embed_dim // 2),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(embed_dim // 2, 4096),  # 64x64 coordinates
+            )
 
     def build_state_action_sequence(self, states, actions) -> torch.Tensor:
         """Build interleaved state-action sequence: [s₀, a₀, s₁, a₁, ..., s_{t-1}, a_{t-1}, s_t]
@@ -535,38 +546,44 @@ class DecisionTransformer(nn.Module):
         final_repr = transformer_output[:, -1]  # [batch, embed_dim]
 
         # Multi-head prediction
+        # Change head (always present)
         change_action_logits = self.change_action_head(
-            final_repr
-        )  # [batch, 5] - ACTION1-5
-        completion_action_logits = self.completion_action_head(
-            final_repr
-        )  # [batch, 5] - ACTION1-5
-        gameover_action_logits = self.gameover_action_head(
             final_repr
         )  # [batch, 5] - ACTION1-5
         change_coord_logits = self.change_coord_head(
             final_repr
         )  # [batch, 4096] - coordinates
-        completion_coord_logits = self.completion_coord_head(
-            final_repr
-        )  # [batch, 4096] - coordinates
-        gameover_coord_logits = self.gameover_coord_head(
-            final_repr
-        )  # [batch, 4096] - coordinates
-
-        # Concatenate for compatibility with existing interface
         change_logits = torch.cat(
             [change_action_logits, change_coord_logits], dim=1
         )  # [batch, 4101]
-        completion_logits = torch.cat(
-            [completion_action_logits, completion_coord_logits], dim=1
-        )  # [batch, 4101]
-        gameover_logits = torch.cat(
-            [gameover_action_logits, gameover_coord_logits], dim=1
-        )  # [batch, 4101]
 
-        return {
-            "change_logits": change_logits,
-            "completion_logits": completion_logits,
-            "gameover_logits": gameover_logits,
-        }
+        # Build output dict - always include change logits
+        output = {"change_logits": change_logits}
+
+        # Completion head (optional)
+        if self.use_completion_head:
+            completion_action_logits = self.completion_action_head(
+                final_repr
+            )  # [batch, 5] - ACTION1-5
+            completion_coord_logits = self.completion_coord_head(
+                final_repr
+            )  # [batch, 4096] - coordinates
+            completion_logits = torch.cat(
+                [completion_action_logits, completion_coord_logits], dim=1
+            )  # [batch, 4101]
+            output["completion_logits"] = completion_logits
+
+        # GAME_OVER head (optional)
+        if self.use_gameover_head:
+            gameover_action_logits = self.gameover_action_head(
+                final_repr
+            )  # [batch, 5] - ACTION1-5
+            gameover_coord_logits = self.gameover_coord_head(
+                final_repr
+            )  # [batch, 4096] - coordinates
+            gameover_logits = torch.cat(
+                [gameover_action_logits, gameover_coord_logits], dim=1
+            )  # [batch, 4101]
+            output["gameover_logits"] = gameover_logits
+
+        return output
