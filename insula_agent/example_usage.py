@@ -6,43 +6,42 @@ This example demonstrates how to use the PureDTAgent directly without
 going through the custom_agents/action.py module.
 """
 
-from insula_agent import DTAgent, load_dt_config
+from insula_agent import Insula, load_config
 
 
 def run_pure_dt_agent_example():
-    """Example of how to instantiate and configure a Pure DT Agent."""
+    """Example of how to instantiate and configure an Insula Agent.
+
+    NOTE: This example is outdated and needs to be rewritten for the new Insula architecture.
+    """
 
     # Example agent parameters (normally provided by ARC-AGI-3 framework)
     agent_params = {
         "card_id": "example_card_123",
         "game_id": "example_game_456",
-        "agent_name": "PureDTAgent_Example",
+        "agent_name": "InsulaAgent_Example",
         "ROOT_URL": "https://arc-agi-3.com",  # Example URL
         "record": False,  # Set to True to enable recording
-        "tags": ["pure_dt", "transformer", "example"],
+        "tags": ["insula", "transformer", "example"],
     }
 
     try:
-        # Initialize the Pure DT Agent - fully self-contained
-        print("🤖 Initializing Pure Decision Transformer Agent...")
-        agent = DTAgent(**agent_params)
+        # Initialize the Insula Agent - fully self-contained
+        print("🤖 Initializing Insula Agent...")
+        agent = Insula(**agent_params)
 
         # The agent is now ready to use with the ARC-AGI-3 framework
-        print(f"✅ Pure DT Agent initialized successfully!")
+        print(f"✅ Insula Agent initialized successfully!")
         print(f"   - Device: {agent.device}")
         print(f"   - Model: {agent.decision_model.__class__.__name__}")
-        print(f"   - Configuration: {agent.config['loss_type']} loss")
-        print(f"   - Context length: {agent.config['context_length']}")
-        print(f"   - Temperature: {agent.config['temperature']}")
+        print(f"   - Configuration: {agent.config.summary()}")
 
         # Example configuration customization
         print("\n🔧 Configuration options:")
-        config = load_dt_config()
-        print(f"   - Available loss types: cross_entropy, selective, hybrid")
-        print(f"   - Current loss type: {config['loss_type']}")
-        print(f"   - Embed dimension: {config['embed_dim']}")
-        print(f"   - Number of layers: {config['num_layers']}")
-        print(f"   - Training frequency: every {config['train_frequency']} actions")
+        config = load_config()
+        print(f"   - Embed dimension: {config.embed_dim}")
+        print(f"   - Number of layers: {config.num_layers}")
+        print(f"   - Training frequency: every {config.train_frequency} actions")
 
         # The agent can now be used with agent.main() in the ARC-AGI-3 framework
         print(f"\n🚀 Agent ready! Use agent.main() to start the game loop.")
@@ -80,27 +79,26 @@ def demonstrate_vit_configuration():
     print("-" * 50)
 
     # Load default config to show ViT settings
-    config = load_dt_config()
+    config = load_config()
 
     print(f"\n  Current ViT Settings:")
-    print(f"    • Encoder type: {config.get('encoder_type', 'vit')}")
-    print(f"    • Cell embedding dim: {config.get('vit_cell_embed_dim', 64)}")
+    print(f"    • Cell embedding dim: {config.vit_cell_embed_dim}")
     print(
-        f"      → Each color (0-15) maps to {config.get('vit_cell_embed_dim', 64)}-dim learned vector"
+        f"      → Each color (0-15) maps to {config.vit_cell_embed_dim}-dim learned vector"
     )
     print(
-        f"    • Patch size: {config.get('vit_patch_size', 8)}×{config.get('vit_patch_size', 8)}"
+        f"    • Patch size: {config.vit_patch_size}×{config.vit_patch_size}"
     )
     print(
-        f"      → Creates {(64 // config.get('vit_patch_size', 8)) ** 2} patches from 64×64 grid"
+        f"      → Creates {(64 // config.vit_patch_size) ** 2} patches from 64×64 grid"
     )
     print(
-        f"      → Each patch: {config.get('vit_patch_size', 8) ** 2} cells (not {16 * config.get('vit_patch_size', 8) ** 2} one-hot values)"
+        f"      → Each patch: {config.vit_patch_size ** 2} cells (not {16 * config.vit_patch_size ** 2} one-hot values)"
     )
-    print(f"    • ViT layers: {config.get('vit_num_layers', 4)}")
-    print(f"    • ViT attention heads: {config.get('vit_num_heads', 8)}")
-    print(f"    • Dropout: {config.get('vit_dropout', 0.1)}")
-    print(f"    • Use CLS token: {config.get('vit_use_cls_token', True)}")
+    print(f"    • ViT layers: {config.vit_num_layers}")
+    print(f"    • ViT attention heads: {config.vit_num_heads}")
+    print(f"    • Dropout: {config.vit_dropout}")
+    print(f"    • Use CLS token: {config.vit_use_cls_token}")
 
     print(f"\n  ViT Architecture Benefits:")
     print(f"    ✓ Learned cell embeddings (like word embeddings in NLP)")
@@ -116,11 +114,14 @@ def demonstrate_vit_configuration():
     print(f"    • 8×8 patches → 64 patches, 64 cells each (balanced, recommended)")
     print(f"    • 16×16 patches → 16 patches, 256 cells each (coarse, faster)")
 
-    print(f"\n  💡 To customize ViT, modify config.py:")
-    print(f"     DEFAULT_DT_CONFIG['vit_cell_embed_dim'] = 64")
-    print(f"     DEFAULT_DT_CONFIG['vit_patch_size'] = 8")
-    print(f"     DEFAULT_DT_CONFIG['vit_num_layers'] = 4")
-    print(f"     DEFAULT_DT_CONFIG['vit_num_heads'] = 8")
+    print(f"\n  💡 To customize ViT, create a custom InsulaConfig:")
+    print(f"     from insula_agent import InsulaConfig")
+    print(f"     config = InsulaConfig(")
+    print(f"         vit_cell_embed_dim=64,")
+    print(f"         vit_patch_size=8,")
+    print(f"         vit_num_layers=4,")
+    print(f"         vit_num_heads=8,")
+    print(f"     )")
 
 
 def main():

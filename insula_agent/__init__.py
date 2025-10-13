@@ -6,20 +6,22 @@ with insular cortex-inspired multi-level integration for ARC-AGI-3.
 """
 
 from insula_agent.config import (
-    load_dt_config,
-    get_loss_config_summary,
-    validate_config,
-    DEFAULT_DT_CONFIG,
+    InsulaConfig,
+    load_config,
+    default_config,
+    cpu_config,
+    gpu_config,
 )
 
 from insula_agent.insula import Insula
 
 __all__ = [
     # Configuration
-    "load_dt_config",
-    "get_loss_config_summary",
-    "validate_config",
-    "DEFAULT_DT_CONFIG",
+    "InsulaConfig",
+    "load_config",
+    "default_config",
+    "cpu_config",
+    "gpu_config",
     # Model
-        "Insula",
+    "Insula",
 ]

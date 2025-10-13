@@ -554,19 +554,23 @@ class DecisionModel(nn.Module):
 
         return sequence
 
-    def forward(self, states, actions) -> dict[str, torch.Tensor]:
+    def forward(self, states, actions, temporal_credit: bool = False) -> dict[str, torch.Tensor]:
         """Per-timestep forward modeling with mode-dependent output shapes.
 
-        Training mode (replay): Predictions at ALL states for episodic learning.
+        Training mode (replay): Predictions at ALL states (if temporal_credit=True) or FINAL state only (if False).
         Inference mode (real-time): Prediction at FINAL state only for action selection.
 
         Args:
             states: [batch, seq_len+1, 64, 64] - k+1 integer grids with cell values 0-15 (past + current)
             actions: [batch, seq_len] - k past actions (0-4100)
+            temporal_credit: bool - If True, compute predictions at all timesteps for temporal credit assignment.
+                                   If False, compute only final prediction (more memory efficient).
+                                   Only used in training mode. Ignored during inference.
 
         Returns:
             dict[str, torch.Tensor]:
-                - Training mode: {"change_logits": [batch, seq_len+1, 4101], ...}
+                - Training mode with temporal_credit=True: {"change_logits": [batch, seq_len+1, 4101], ...}
+                - Training mode with temporal_credit=False: {"change_logits": [batch, 4101], ...}
                 - Inference mode: {"change_logits": [batch, 4101], ...}
         """
         # Build interleaved state-action sequence
@@ -585,51 +589,100 @@ class DecisionModel(nn.Module):
         )
 
         if self.training:
-            # === TRAINING MODE: Predictions at ALL states (continuous forward modeling) ===
-            # Extract ALL state representations (states at even positions: 0, 2, 4, ...)
-            state_reprs = transformer_output[:, ::2, :]  # [batch, seq_len+1, embed_dim]
+            # === TRAINING MODE ===
+            if temporal_credit:
+                # Predictions at ALL states for temporal credit assignment
+                # Extract ALL state representations (states at even positions: 0, 2, 4, ...)
+                state_reprs = transformer_output[:, ::2, :]  # [batch, seq_len+1, embed_dim]
 
-            # Multi-head prediction - Change head (always present)
-            change_action_logits = self.change_action_head(
-                state_reprs
-            )  # [batch, seq_len+1, 5] - ACTION1-5 at each state
-            change_coord_logits = self.change_coord_head(
-                state_reprs
-            )  # [batch, seq_len+1, 4096] - coordinates at each state
-            change_logits = torch.cat(
-                [change_action_logits, change_coord_logits], dim=2
-            )  # [batch, seq_len+1, 4101] - concat on dim=2 for 3D tensors
-
-            # Build output dict - always include change logits
-            output = {"change_logits": change_logits}
-
-            # Completion head (optional)
-            if self.use_completion_head:
-                completion_action_logits = self.completion_action_head(
+                # Multi-head prediction - Change head (always present)
+                change_action_logits = self.change_action_head(
                     state_reprs
-                )  # [batch, seq_len+1, 5]
-                completion_coord_logits = self.completion_coord_head(
+                )  # [batch, seq_len+1, 5] - ACTION1-5 at each state
+                change_coord_logits = self.change_coord_head(
                     state_reprs
-                )  # [batch, seq_len+1, 4096]
-                completion_logits = torch.cat(
-                    [completion_action_logits, completion_coord_logits], dim=2
-                )  # [batch, seq_len+1, 4101]
-                output["completion_logits"] = completion_logits
+                )  # [batch, seq_len+1, 4096] - coordinates at each state
+                change_logits = torch.cat(
+                    [change_action_logits, change_coord_logits], dim=2
+                )  # [batch, seq_len+1, 4101] - concat on dim=2 for 3D tensors
 
-            # GAME_OVER head (optional)
-            if self.use_gameover_head:
-                gameover_action_logits = self.gameover_action_head(
-                    state_reprs
-                )  # [batch, seq_len+1, 5]
-                gameover_coord_logits = self.gameover_coord_head(
-                    state_reprs
-                )  # [batch, seq_len+1, 4096]
-                gameover_logits = torch.cat(
-                    [gameover_action_logits, gameover_coord_logits], dim=2
-                )  # [batch, seq_len+1, 4101]
-                output["gameover_logits"] = gameover_logits
+                # Build output dict - always include change logits
+                output = {"change_logits": change_logits}
 
-            return output  # All [batch, seq_len+1, 4101]
+                # Completion head (optional)
+                if self.use_completion_head:
+                    completion_action_logits = self.completion_action_head(
+                        state_reprs
+                    )  # [batch, seq_len+1, 5]
+                    completion_coord_logits = self.completion_coord_head(
+                        state_reprs
+                    )  # [batch, seq_len+1, 4096]
+                    completion_logits = torch.cat(
+                        [completion_action_logits, completion_coord_logits], dim=2
+                    )  # [batch, seq_len+1, 4101]
+                    output["completion_logits"] = completion_logits
+
+                # GAME_OVER head (optional)
+                if self.use_gameover_head:
+                    gameover_action_logits = self.gameover_action_head(
+                        state_reprs
+                    )  # [batch, seq_len+1, 5]
+                    gameover_coord_logits = self.gameover_coord_head(
+                        state_reprs
+                    )  # [batch, seq_len+1, 4096]
+                    gameover_logits = torch.cat(
+                        [gameover_action_logits, gameover_coord_logits], dim=2
+                    )  # [batch, seq_len+1, 4101]
+                    output["gameover_logits"] = gameover_logits
+
+                return output  # All [batch, seq_len+1, 4101]
+
+            else:
+                # Prediction at FINAL state only (memory efficient)
+                # Extract final representation (current state)
+                final_repr = transformer_output[:, -1]  # [batch, embed_dim]
+
+                # Multi-head prediction - Change head (always present)
+                change_action_logits = self.change_action_head(
+                    final_repr
+                )  # [batch, 5] - ACTION1-5
+                change_coord_logits = self.change_coord_head(
+                    final_repr
+                )  # [batch, 4096] - coordinates
+                change_logits = torch.cat(
+                    [change_action_logits, change_coord_logits], dim=1
+                )  # [batch, 4101] - concat on dim=1 for 2D tensors
+
+                # Build output dict - always include change logits
+                output = {"change_logits": change_logits}
+
+                # Completion head (optional)
+                if self.use_completion_head:
+                    completion_action_logits = self.completion_action_head(
+                        final_repr
+                    )  # [batch, 5]
+                    completion_coord_logits = self.completion_coord_head(
+                        final_repr
+                    )  # [batch, 4096]
+                    completion_logits = torch.cat(
+                        [completion_action_logits, completion_coord_logits], dim=1
+                    )  # [batch, 4101]
+                    output["completion_logits"] = completion_logits
+
+                # GAME_OVER head (optional)
+                if self.use_gameover_head:
+                    gameover_action_logits = self.gameover_action_head(
+                        final_repr
+                    )  # [batch, 5]
+                    gameover_coord_logits = self.gameover_coord_head(
+                        final_repr
+                    )  # [batch, 4096]
+                    gameover_logits = torch.cat(
+                        [gameover_action_logits, gameover_coord_logits], dim=1
+                    )  # [batch, 4101]
+                    output["gameover_logits"] = gameover_logits
+
+                return output  # All [batch, 4101]
 
         else:
             # === INFERENCE MODE: Prediction at FINAL state only (real-time forward modeling) ===

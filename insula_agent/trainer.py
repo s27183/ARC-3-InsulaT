@@ -131,8 +131,8 @@ def create_change_sequences(
         List of sequence dictionaries, all with same length (change_context_len).
         Returns empty list if buffer too small.
     """
-    replay_size = config["change_replay_size"]
-    context_len = config["change_context_len"]
+    replay_size = config.change_replay_size
+    context_len = config.change_context_len
     buffer_len = len(experience_buffer)
 
     # Need at least context_len + 1 experiences (k past actions + 1 current state)
@@ -168,10 +168,10 @@ def create_completion_sequences(
         List of sequence dictionaries with variable lengths (80%-100% of completion_context_len).
         Returns empty list if no completion events found.
     """
-    replay_size = config["completion_replay_size"]
-    target_context_len = config["completion_context_len"]
-    variation_min = config["replay_variation_min"]
-    variation_max = config["replay_variation_max"]
+    replay_size = config.completion_replay_size
+    target_context_len = config.completion_context_len
+    variation_min = config.replay_variation_min
+    variation_max = config.replay_variation_max
 
     # Find all completion events in buffer
     completion_idx = [
@@ -223,10 +223,10 @@ def create_gameover_sequences(
         List of sequence dictionaries with variable lengths (80%-100% of gameover_context_len).
         Returns empty list if no GAME_OVER events found.
     """
-    replay_size = config["gameover_replay_size"]
-    target_context_len = config["gameover_context_len"]
-    variation_min = config["replay_variation_min"]
-    variation_max = config["replay_variation_max"]
+    replay_size = config.gameover_replay_size
+    target_context_len = config.gameover_context_len
+    variation_min = config.replay_variation_min
+    variation_max = config.replay_variation_max
 
     # Find all GAME_OVER events in buffer (gameover_reward == 0.0 means GAME_OVER occurred)
     gameover_idx = [
@@ -306,8 +306,8 @@ def compute_head_loss(
     coord_diversity = coord_probs.mean(dim=1).mean(dim=0)
 
     # Diversity coefficients (configurable)
-    action_coeff = config.get("action_entropy_coeff", 0.0001)
-    coord_coeff = config.get("coord_entropy_coeff", 0.00001)
+    action_coeff = config.action_entropy_coeff
+    coord_coeff = config.coord_entropy_coeff
 
     # Total loss with diversity regularization
     # Subtracting encourages higher mean probability = more action diversity
@@ -398,8 +398,8 @@ def compute_head_loss_with_temporal_credit(
     coord_diversity = coord_probs.mean(dim=1).mean(dim=0)
 
     # Diversity coefficients (configurable)
-    action_coeff = config.get("action_entropy_coeff", 0.0001)
-    coord_coeff = config.get("coord_entropy_coeff", 0.00001)
+    action_coeff = config.action_entropy_coeff
+    coord_coeff = config.coord_entropy_coeff
 
     # Total loss with diversity regularization
     # Subtracting encourages higher mean probability = more action diversity
@@ -448,24 +448,27 @@ def train_head_batch(
 
     if head_type == "change":
         all_rewards = torch.stack([seq["all_change_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        eligibility_decay = config["change_eligibility_decay"]
+        eligibility_decay = config.change_eligibility_decay
     elif head_type == "completion":
         all_rewards = torch.stack([seq["all_completion_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        eligibility_decay = config["completion_eligibility_decay"]
+        eligibility_decay = config.completion_eligibility_decay
     elif head_type == "gameover":
         all_rewards = torch.stack([seq["all_gameover_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        eligibility_decay = config["gameover_eligibility_decay"]
+        eligibility_decay = config.gameover_eligibility_decay
     else:
         raise ValueError(f"Unknown head_type: {head_type}")
 
-    # Forward pass (model in training mode returns per-timestep predictions)
-    logits_dict = model(states_batch, actions_batch)
+    # Forward pass (model in training mode)
+    # Pass temporal_credit flag to control whether to compute all timestep predictions or just final
+    temporal_credit = config.temporal_credit
+    logits_dict = model(states_batch, actions_batch, temporal_credit=temporal_credit)
 
-    # Extract logits for this head (3D: predictions at all states)
-    head_logits = logits_dict[f"{head_type}_logits"]  # [B, seq_len+1, 4101]
+    # Extract logits for this head
+    # Shape depends on temporal_credit: [B, seq_len+1, 4101] if True, [B, 4101] if False
+    head_logits = logits_dict[f"{head_type}_logits"]
 
     # Compute loss based on temporal_credit config
-    if config.get("temporal_credit", True):
+    if temporal_credit:
         # Use temporal credit assignment (all actions with eligibility decay)
         loss = compute_head_loss_with_temporal_credit(
             logits=head_logits,
@@ -526,7 +529,7 @@ def train_model(
     Returns:
         None (modifies model in-place)
     """
-    if len(experience_buffer) < config["min_buffer_size"]:
+    if len(experience_buffer) < config.min_buffer_size:
         return None
 
     # === STEP 1: Create head-specific sequences ===
@@ -534,13 +537,13 @@ def train_model(
     change_sequences = create_change_sequences(experience_buffer, config)
 
     # Conditionally create completion sequences (optional)
-    if config.get("use_completion_head", True):
+    if config.use_completion_head:
         completion_sequences = create_completion_sequences(experience_buffer, config)
     else:
         completion_sequences = []
 
     # Conditionally create gameover sequences (optional)
-    if config.get("use_gameover_head", True):
+    if config.use_gameover_head:
         gameover_sequences = create_gameover_sequences(experience_buffer, config)
     else:
         gameover_sequences = []
@@ -554,7 +557,7 @@ def train_model(
     gameover_batches = group_sequences_by_length(gameover_sequences) if gameover_sequences else {}
 
     # Change sequences all same length → single batch
-    change_batches = {config["change_context_len"]: change_sequences} if change_sequences else {}
+    change_batches = {config.change_context_len: change_sequences} if change_sequences else {}
 
     # Log training info
     total_sequences = len(change_sequences) + len(completion_sequences) + len(gameover_sequences)
@@ -569,7 +572,7 @@ def train_model(
     # === STEP 3: Training loop with gradient accumulation ===
     model.train()
 
-    for epoch in range(config["epochs_per_training"]):
+    for epoch in range(config.epochs_per_training):
         optimizer.zero_grad()  # Zero gradients at start of epoch
 
         accumulated_metrics = {
@@ -589,7 +592,7 @@ def train_model(
             accumulated_metrics["num_batches"] += 1
 
         # === STEP 5: Process completion head batches (if head enabled) ===
-        if config.get("use_completion_head", True):
+        if config.use_completion_head:
             for length, sequences in completion_batches.items():
                 loss, metrics = train_head_batch(
                     model, sequences, head_type="completion", config=config, device=device
@@ -598,7 +601,7 @@ def train_model(
                 accumulated_metrics["num_batches"] += 1
 
         # === STEP 6: Process gameover head batches (if head enabled) ===
-        if config.get("use_gameover_head", True):
+        if config.use_gameover_head:
             for length, sequences in gameover_batches.items():
                 loss, metrics = train_head_batch(
                     model, sequences, head_type="gameover", config=config, device=device
@@ -607,10 +610,10 @@ def train_model(
                 accumulated_metrics["num_batches"] += 1
 
         # === STEP 7: Single optimizer step (accumulated gradients) ===
-        if config["gradient_clip_norm"] > 0:
+        if config.gradient_clip_norm > 0:
             torch.nn.utils.clip_grad_norm_(
                 model.parameters(),
-                config["gradient_clip_norm"],
+                config.gradient_clip_norm,
             )
 
         optimizer.step()
@@ -626,7 +629,7 @@ def train_model(
         log_hierarchical_dt_metrics(writer, accumulated_metrics, action_counter, config)
 
         # Log decay rates (if using learned decay or at log intervals for fixed)
-        log_interval = config.get("log_decay_interval", 10)
+        log_interval = getattr(config, "log_decay_interval", 10)
         if epoch % log_interval == 0:
             # Access decay rates via model properties (works for both learned and fixed)
             logger.info(
@@ -686,11 +689,11 @@ def log_hierarchical_dt_metrics(
         writer.add_scalar("InsulaAgent/change_loss", metrics["change_loss"], action_counter)
 
     # Only log completion loss if completion head is enabled
-    if config and config.get("use_completion_head", True):
+    if config and config.use_completion_head:
         if metrics.get("completion_loss", 0) > 0:
             writer.add_scalar("InsulaAgent/completion_loss", metrics["completion_loss"], action_counter)
 
     # Only log gameover loss if gameover head is enabled
-    if config and config.get("use_gameover_head", True):
+    if config and config.use_gameover_head:
         if metrics.get("gameover_loss", 0) > 0:
             writer.add_scalar("InsulaAgent/gameover_loss", metrics["gameover_loss"], action_counter)
