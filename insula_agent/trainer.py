@@ -462,7 +462,7 @@ def train_head_batch(
 
     # Forward pass (model in training mode)
     # Pass temporal_credit flag to control whether to compute all timestep predictions or just final
-    temporal_credit = config.temporal_credit
+    temporal_credit = config.temporal_tracing
     logits_dict = model(states_batch, actions_batch, temporal_credit=temporal_credit)
 
     # Extract logits for this head
@@ -630,9 +630,8 @@ def train_model(
 
         log_hierarchical_dt_metrics(writer, accumulated_metrics, action_counter, config)
 
-        # Log decay rates (if using learned decay or at log intervals for fixed)
-        log_interval = getattr(config, "log_decay_interval", 10)
-        if epoch % log_interval == 0:
+        # Log decay rates (if using learned decay)
+        if config.use_learned_decay:
             # Access decay rates via model properties (works for both learned and fixed)
             logger.info(
                 f"  Decay rates (epoch {epoch}): "
