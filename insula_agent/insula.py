@@ -407,8 +407,28 @@ class Insula(Agent):
 
         self.decision_model.eval()
         with torch.no_grad():
-            # Build state-action sequence and get logits
-            max_context_len = self.config.max_context_len
+            # Dynamic inference context length based on enabled heads
+            # Rationale: Each head needs ≥ its training context length for correct predictions
+            # Use longest context among enabled heads (attention handles longer context gracefully)
+            inference_context_len = self.config.change_context_len  # Start with change (always enabled)
+
+            if self.config.use_completion_head:
+                inference_context_len = max(inference_context_len, self.config.completion_context_len)
+
+            if self.config.use_gameover_head:
+                inference_context_len = max(inference_context_len, self.config.gameover_context_len)
+
+            # Log inference context (debug level, only once on first inference)
+            if self.action_counter == 1:
+                enabled_heads = ["change"]
+                if self.config.use_completion_head:
+                    enabled_heads.append("completion")
+                if self.config.use_gameover_head:
+                    enabled_heads.append("gameover")
+                self.logger.debug(
+                    f"Inference context length: {inference_context_len} steps "
+                    f"(enabled heads: {', '.join(enabled_heads)})"
+                )
 
             # Cold start - random valid action if no experience
             if len(self.experience_buffer) < 1:
@@ -425,7 +445,7 @@ class Insula(Agent):
             else:
                 # Build state-action sequence for inference
                 states, actions = self._build_inference_sequence(
-                    latest_frame_torch, max_context_len
+                    latest_frame_torch, inference_context_len
                 )
 
                 # Get action logits from Insula (variable number of heads)
@@ -616,7 +636,21 @@ class Insula(Agent):
             return action
 
     def _build_inference_sequence(self, current_frame, context_len):
-        """Build state-action sequence for Decision Transformer inference."""
+        """Build state-action sequence for Decision Transformer inference.
+
+        Args:
+            current_frame: Current frame tensor [64, 64]
+            context_len: Number of past experiences to include. This is dynamically
+                        selected based on enabled heads - each head requires at least
+                        its training context length for correct predictions:
+                        - Change-only: 5 steps (8× faster than fixed 40)
+                        - Change+Completion: 20 steps (2× faster than fixed 40)
+                        - All heads: 40 steps (same as fixed, but semantically correct)
+
+        Returns:
+            states: [1, seq_len+1, 64, 64] - State sequence including current
+            actions: [1, seq_len] - Past actions (current action will be predicted)
+        """
         # Get recent experiences up to max context length
         available_context = min(int(context_len), len(self.experience_buffer))
         recent_experiences = (
