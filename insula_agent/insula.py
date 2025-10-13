@@ -223,6 +223,15 @@ class Insula(Agent):
         Returns:
             action: The action to take
         """
+        # Convert current frame to torch tensor
+        current_frame = None
+        if latest_frame.state is not GameState.NOT_PLAYED:
+            current_frame = self._frame_to_tensor(latest_frame)
+
+            # Store unique experience
+            if current_frame is not None:
+                self._store_experience(current_frame, latest_frame)
+
         # Train the model
         if self._should_train_model(latest_frame):
             buffer_size = len(self.experience_buffer)
@@ -262,12 +271,6 @@ class Insula(Agent):
                 self.logger.info(f"🤖 GAME OVER. Game {self.game_id} is reset. Current score: {self.current_score}")
             return action
 
-        # Convert current frame to torch tensor
-        current_frame = self._frame_to_tensor(latest_frame)
-
-        # Store unique experience
-        if current_frame is not None:
-            self._store_experience(current_frame, latest_frame)
 
         # If frame processing failed, reset tracking and return a random action
         if current_frame is None:
