@@ -582,21 +582,23 @@ def train_model(
             accumulated_metrics["change_loss"] += metrics["loss"]
             accumulated_metrics["num_batches"] += 1
 
-        # === STEP 5: Process completion head batches ===
-        for length, sequences in completion_batches.items():
-            loss, metrics = train_head_batch(
-                model, sequences, head_type="completion", config=config, device=device
-            )
-            accumulated_metrics["completion_loss"] += metrics["loss"]
-            accumulated_metrics["num_batches"] += 1
+        # === STEP 5: Process completion head batches (if head enabled) ===
+        if config.get("use_completion_head", True):
+            for length, sequences in completion_batches.items():
+                loss, metrics = train_head_batch(
+                    model, sequences, head_type="completion", config=config, device=device
+                )
+                accumulated_metrics["completion_loss"] += metrics["loss"]
+                accumulated_metrics["num_batches"] += 1
 
-        # === STEP 6: Process gameover head batches ===
-        for length, sequences in gameover_batches.items():
-            loss, metrics = train_head_batch(
-                model, sequences, head_type="gameover", config=config, device=device
-            )
-            accumulated_metrics["gameover_loss"] += metrics["loss"]
-            accumulated_metrics["num_batches"] += 1
+        # === STEP 6: Process gameover head batches (if head enabled) ===
+        if config.get("use_gameover_head", True):
+            for length, sequences in gameover_batches.items():
+                loss, metrics = train_head_batch(
+                    model, sequences, head_type="gameover", config=config, device=device
+                )
+                accumulated_metrics["gameover_loss"] += metrics["loss"]
+                accumulated_metrics["num_batches"] += 1
 
         # === STEP 7: Single optimizer step (accumulated gradients) ===
         if config["gradient_clip_norm"] > 0:
