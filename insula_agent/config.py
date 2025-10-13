@@ -82,9 +82,9 @@ class InsulaConfig:
     # Eligibility Decay Rates (ONLY used when temporal_credit=True)
     # TODO: enable/disable learned decay for ablation studies
     use_learned_decay: bool = False  # Learn decay rates during training
-    change_eligibility_decay: float = 1.0  # lower value -> Fast decay for immediate effects?
-    completion_eligibility_decay: float = 1.0  # higher value -> Medium decay for goal sequences?
-    gameover_eligibility_decay: float = 1.0  # highest value -> Slow decay for failure chains
+    change_temporal_decay: float = 1.0  # lower value -> Fast decay for immediate effects?
+    completion_temporal_decay: float = 1.0  # higher value -> Medium decay for goal sequences?
+    gameover_temporal_decay: float = 1.0  # highest value -> Slow decay for failure chains
 
     # ============================================================================
     # EXPERIENCE REPLAY
@@ -156,19 +156,19 @@ class InsulaConfig:
             )
 
         # Validate eligibility decay rates (0, 1]
-        if not (0 < self.change_eligibility_decay <= 1.0):
+        if not (0 < self.change_temporal_decay <= 1.0):
             raise ValueError(
-                f"change_eligibility_decay ({self.change_eligibility_decay}) must be in (0, 1]"
+                f"change_eligibility_decay ({self.change_temporal_decay}) must be in (0, 1]"
             )
 
-        if not (0 < self.completion_eligibility_decay <= 1.0):
+        if not (0 < self.completion_temporal_decay <= 1.0):
             raise ValueError(
-                f"completion_eligibility_decay ({self.completion_eligibility_decay}) must be in (0, 1]"
+                f"completion_eligibility_decay ({self.completion_temporal_decay}) must be in (0, 1]"
             )
 
-        if not (0 < self.gameover_eligibility_decay <= 1.0):
+        if not (0 < self.gameover_temporal_decay <= 1.0):
             raise ValueError(
-                f"gameover_eligibility_decay ({self.gameover_eligibility_decay}) must be in (0, 1]"
+                f"gameover_eligibility_decay ({self.gameover_temporal_decay}) must be in (0, 1]"
             )
 
         # Validate replay variation rates [0.5, 1.0]

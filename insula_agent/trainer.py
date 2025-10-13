@@ -322,7 +322,7 @@ def compute_head_loss_with_temporal_credit(
     logits: torch.Tensor,
     all_action_indices: torch.Tensor,
     all_rewards: torch.Tensor,
-    eligibility_decay: float,
+    temporal_decay: float,
     config: InsulaConfig,
 ) -> torch.Tensor:
     """Compute loss for a single head with per-timestep predictions and temporal credit assignment.
@@ -337,7 +337,7 @@ def compute_head_loss_with_temporal_credit(
         logits: [batch, seq_len+1, 4101] - Predicted logits at each state (training mode)
         all_action_indices: [batch, seq_len+1] - ALL actions in sequence
         all_rewards: [batch, seq_len+1] - Rewards for this head (1.0 or 0.0)
-        eligibility_decay: Head-specific decay rate (0.7, 0.8, or 0.9)
+        temporal_decay: Head-specific decay rate (0.7, 0.8, or 0.9)
         config: Configuration dictionary with:
             - "action_entropy_coeff": float (default 0.0001)
             - "coord_entropy_coeff": float (default 0.00001)
@@ -359,7 +359,7 @@ def compute_head_loss_with_temporal_credit(
 
         # Compute eligibility weight (exponential decay from end)
         steps_from_end = seq_len - 1 - t
-        time_weight = eligibility_decay ** steps_from_end
+        time_weight = temporal_decay ** steps_from_end
 
         # Get action at timestep t
         action_t = all_action_indices[:, t]  # [batch]
@@ -450,13 +450,13 @@ def train_head_batch(
 
     if head_type == "change":
         all_rewards = torch.stack([seq["all_change_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        eligibility_decay = config.change_eligibility_decay
+        temporal_decay = config.change_temporal_decay
     elif head_type == "completion":
         all_rewards = torch.stack([seq["all_completion_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        eligibility_decay = config.completion_eligibility_decay
+        temporal_decay = config.completion_temporal_decay
     elif head_type == "gameover":
         all_rewards = torch.stack([seq["all_gameover_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        eligibility_decay = config.gameover_eligibility_decay
+        temporal_decay = config.gameover_temporal_decay
     else:
         raise ValueError(f"Unknown head_type: {head_type}")
 
@@ -476,7 +476,7 @@ def train_head_batch(
             logits=head_logits,
             all_action_indices=all_action_indices,
             all_rewards=all_rewards,
-            eligibility_decay=eligibility_decay,
+            temporal_decay=temporal_decay,
             config=config,
         )
     else:

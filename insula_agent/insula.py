@@ -124,9 +124,9 @@ class Insula(Agent):
             use_gameover_head=self.config.use_gameover_head,
             # Learned decay configuration
             use_learned_decay=self.config.use_learned_decay,
-            change_decay_init=self.config.change_eligibility_decay,
-            completion_decay_init=self.config.completion_eligibility_decay,
-            gameover_decay_init=self.config.gameover_eligibility_decay,
+            change_decay_init=self.config.change_temporal_decay,
+            completion_decay_init=self.config.completion_temporal_decay,
+            gameover_decay_init=self.config.gameover_temporal_decay,
         ).to(self.device)
 
         # Set model to eval mode for inference (returns 2D logits [batch, 4101])
