@@ -39,9 +39,10 @@ DEFAULT_DT_CONFIG = {
     "gameover_context_len": 100,  # Context length for GAME_OVER head (failure causal chains)
 
     # Head-Specific Eligibility Decay (for temporal credit assignment)
-    "change_eligibility_decay": 0.7,  # Fast decay for immediate effects
-    "completion_eligibility_decay": 0.8,  # Medium decay for goal-oriented actions
-    "gameover_eligibility_decay": 0.9,  # Slow decay for long causal chains
+    "use_learned_decay": False,  # Toggle learned vs fixed decay rates
+    "change_eligibility_decay": 0.7,  # Fast decay for immediate effects (init value if learned)
+    "completion_eligibility_decay": 0.8,  # Medium decay for goal-oriented actions (init value if learned)
+    "gameover_eligibility_decay": 0.9,  # Slow decay for long causal chains (init value if learned)
 
     # Importance-Weighted Replay (Head-Specific Replay Sizes)
     "change_replay_size": 16,  # Number of change sequences per training round

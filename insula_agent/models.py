@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -385,11 +386,46 @@ class DecisionModel(nn.Module):
         # Head configuration
         use_completion_head=True,  # Whether to use completion prediction head
         use_gameover_head=True,    # Whether to use GAME_OVER prediction head
+        # Learned decay configuration
+        use_learned_decay=False,  # Whether to learn decay rates vs use fixed values
+        change_decay_init=0.7,  # Initial decay rate for change head (init value if learned)
+        completion_decay_init=0.8,  # Initial decay rate for completion head (init value if learned)
+        gameover_decay_init=0.9,  # Initial decay rate for gameover head (init value if learned)
     ):
         super().__init__()
 
         self.use_completion_head = use_completion_head
         self.use_gameover_head = use_gameover_head
+
+        # Eligibility decay rates (learned or fixed)
+        # Shape: [B, T+1, 4101] - per-timestep logits for all states
+        self.use_learned_decay = use_learned_decay
+        if use_learned_decay:
+            # Learnable parameters (optimized by gradient descent)
+            # Store in logit space for unconstrained optimization, sigmoid ensures [0, 1]
+            self.change_decay_logit = nn.Parameter(
+                torch.tensor(self._decay_to_logit(change_decay_init))
+            )
+            self.completion_decay_logit = nn.Parameter(
+                torch.tensor(self._decay_to_logit(completion_decay_init))
+            )
+            self.gameover_decay_logit = nn.Parameter(
+                torch.tensor(self._decay_to_logit(gameover_decay_init))
+            )
+        else:
+            # Fixed buffers (saved with checkpoint but not optimized)
+            self.register_buffer(
+                'change_decay_logit',
+                torch.tensor(self._decay_to_logit(change_decay_init))
+            )
+            self.register_buffer(
+                'completion_decay_logit',
+                torch.tensor(self._decay_to_logit(completion_decay_init))
+            )
+            self.register_buffer(
+                'gameover_decay_logit',
+                torch.tensor(self._decay_to_logit(gameover_decay_init))
+            )
 
         # Component modules - Use ViT State Encoder with insular-inspired cell integration
         self.state_encoder = ViTStateEncoder(
@@ -641,3 +677,45 @@ class DecisionModel(nn.Module):
                 output["gameover_logits"] = gameover_logits
 
             return output  # All [batch, 4101]
+
+    @staticmethod
+    def _decay_to_logit(decay: float) -> float:
+        """Convert decay rate [0, 1] to logit space.
+
+        Logit space allows unconstrained optimization while sigmoid
+        ensures final values stay in valid range (0, 1).
+
+        Args:
+            decay: Decay rate in [0, 1]
+
+        Returns:
+            logit: log(decay / (1 - decay))
+        """
+        return math.log(decay / (1.0 - decay))
+
+    @property
+    def change_decay(self) -> float:
+        """Current change head decay rate (learned or fixed).
+
+        Returns:
+            decay: float in (0, 1), sigmoid of stored logit
+        """
+        return torch.sigmoid(self.change_decay_logit).item()
+
+    @property
+    def completion_decay(self) -> float:
+        """Current completion head decay rate (learned or fixed).
+
+        Returns:
+            decay: float in (0, 1), sigmoid of stored logit
+        """
+        return torch.sigmoid(self.completion_decay_logit).item()
+
+    @property
+    def gameover_decay(self) -> float:
+        """Current gameover head decay rate (learned or fixed).
+
+        Returns:
+            decay: float in (0, 1), sigmoid of stored logit
+        """
+        return torch.sigmoid(self.gameover_decay_logit).item()

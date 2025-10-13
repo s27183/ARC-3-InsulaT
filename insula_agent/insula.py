@@ -118,9 +118,16 @@ class Insula(Agent):
             vit_num_heads=self.config.get("vit_num_heads", 8),
             vit_dropout=self.config.get("vit_dropout", 0.1),
             vit_use_cls_token=self.config.get("vit_use_cls_token", True),
+            vit_pos_dim_ratio=self.config.get("vit_pos_dim_ratio", 0.5),
+            vit_use_patch_pos_encoding=self.config.get("vit_use_patch_pos_encoding", False),
             # Head configuration
             use_completion_head=self.config.get("use_completion_head", True),
             use_gameover_head=self.config.get("use_gameover_head", True),
+            # Learned decay configuration
+            use_learned_decay=self.config.get("use_learned_decay", False),
+            change_decay_init=self.config.get("change_eligibility_decay", 0.7),
+            completion_decay_init=self.config.get("completion_eligibility_decay", 0.8),
+            gameover_decay_init=self.config.get("gameover_eligibility_decay", 0.9),
         ).to(self.device)
 
         # Set model to eval mode for inference (returns 2D logits [batch, 4101])

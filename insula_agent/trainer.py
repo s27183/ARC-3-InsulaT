@@ -625,6 +625,22 @@ def train_model(
 
         log_hierarchical_dt_metrics(writer, accumulated_metrics, action_counter, config)
 
+        # Log decay rates (if using learned decay or at log intervals for fixed)
+        log_interval = config.get("log_decay_interval", 10)
+        if epoch % log_interval == 0:
+            # Access decay rates via model properties (works for both learned and fixed)
+            logger.info(
+                f"  Decay rates (epoch {epoch}): "
+                f"change={model.change_decay:.4f}, "
+                f"completion={model.completion_decay:.4f}, "
+                f"gameover={model.gameover_decay:.4f}"
+            )
+
+            # Log to TensorBoard
+            writer.add_scalar("InsulaAgent/decay/change", model.change_decay, action_counter)
+            writer.add_scalar("InsulaAgent/decay/completion", model.completion_decay, action_counter)
+            writer.add_scalar("InsulaAgent/decay/gameover", model.gameover_decay, action_counter)
+
     # Log completion
     logger.info(
         f"✅ Insula training completed. Game: {game_id}. "
