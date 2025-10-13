@@ -18,6 +18,8 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
+from insula_agent.config import InsulaConfig
+
 
 # ============================================================================
 # Sequence Creation Functions
@@ -117,7 +119,7 @@ def group_sequences_by_length(
 
 def create_change_sequences(
     experience_buffer: deque,
-    config: dict[str, Any],
+    config: InsulaConfig,
 ) -> list[dict[str, torch.Tensor]]:
     """Create change sequences: random sampling, fixed length, no variation.
 
@@ -152,7 +154,7 @@ def create_change_sequences(
 
 def create_completion_sequences(
     experience_buffer: deque,
-    config: dict[str, Any],
+    config: InsulaConfig,
 ) -> list[dict[str, torch.Tensor]]:
     """Create completion sequences: outcome-anchored, variable length, multiple batches.
 
@@ -207,7 +209,7 @@ def create_completion_sequences(
 
 def create_gameover_sequences(
     experience_buffer: deque,
-    config: dict[str, Any],
+    config: InsulaConfig,
 ) -> list[dict[str, torch.Tensor]]:
     """Create GAME_OVER sequences: outcome-anchored, variable length, multiple batches.
 
@@ -268,7 +270,7 @@ def compute_head_loss(
     head_logits: torch.Tensor,
     target_actions: torch.Tensor,
     rewards: torch.Tensor,
-    config: dict[str, Any],
+    config: InsulaConfig,
 ) -> torch.Tensor:
     """Compute loss for a single head WITHOUT temporal credit (only final action).
 
@@ -321,7 +323,7 @@ def compute_head_loss_with_temporal_credit(
     all_action_indices: torch.Tensor,
     all_rewards: torch.Tensor,
     eligibility_decay: float,
-    config: dict[str, Any],
+    config: InsulaConfig,
 ) -> torch.Tensor:
     """Compute loss for a single head with per-timestep predictions and temporal credit assignment.
 
@@ -416,7 +418,7 @@ def train_head_batch(
     model: torch.nn.Module,
     sequences: list[dict[str, torch.Tensor]],
     head_type: str,
-    config: dict[str, Any],
+    config: InsulaConfig,
     device: torch.device,
 ) -> tuple[torch.Tensor, dict[str, Any]]:
     """Train a single batch for a specific head.
@@ -506,7 +508,7 @@ def train_model(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     experience_buffer: deque,
-    config: dict[str, Any],
+    config: InsulaConfig,
     device: torch.device,
     writer: SummaryWriter,
     logger: logging.Logger,
@@ -662,7 +664,7 @@ def log_hierarchical_dt_metrics(
     writer: SummaryWriter,
     metrics: dict[str, float],
     action_counter: int,
-    config: dict[str, Any] = None,
+    config: InsulaConfig = None,
 ) -> None:
     """Log hierarchical training metrics to tensorboard.
 
