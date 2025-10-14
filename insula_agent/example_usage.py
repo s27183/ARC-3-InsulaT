@@ -87,13 +87,13 @@ def demonstrate_vit_configuration():
         f"      → Each color (0-15) maps to {config.vit_cell_embed_dim}-dim learned vector"
     )
     print(
-        f"    • Patch size: {config.vit_patch_size}×{config.vit_patch_size}"
+        f"    • Patch size: {config.vit_defaultpatch_size}×{config.vit_defaultpatch_size}"
     )
     print(
-        f"      → Creates {(64 // config.vit_patch_size) ** 2} patches from 64×64 grid"
+        f"      → Creates {(64 // config.vit_defaultpatch_size) ** 2} patches from 64×64 grid"
     )
     print(
-        f"      → Each patch: {config.vit_patch_size ** 2} cells (not {16 * config.vit_patch_size ** 2} one-hot values)"
+        f"      → Each patch: {config.vit_defaultpatch_size ** 2} cells (not {16 * config.vit_defaultpatch_size ** 2} one-hot values)"
     )
     print(f"    • ViT layers: {config.vit_num_layers}")
     print(f"    • ViT attention heads: {config.vit_num_heads}")
