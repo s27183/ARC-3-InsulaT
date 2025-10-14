@@ -22,7 +22,7 @@ Components:
 Key Features:
 - Online supervised learning: Labels from game API outcomes (change/completion/gameover)
 - Hierarchical context windows: 15/100/300 steps for change/completion/gameover heads
-- Head-specific eligibility decay: 0.7/0.8/0.9 for multi-timescale learning
+- Head-specific temporal decay: 0.7/0.8/0.9 for multi-timescale replay weighting
 - Importance-weighted replay: 1:5:10 ratio (critical events replayed more)
 - Temporal hindsight traces: Individual action evaluation after seeing full trajectory
 - Joint optimization: Single optimizer step on accumulated gradients from all heads

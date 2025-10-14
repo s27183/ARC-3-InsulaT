@@ -50,8 +50,8 @@ class InsulaConfig:
     # Multi-Head Prediction Architecture
     # TODO: enable/disable learned heads for ablation studies
     use_change_head: bool = True  # Always True (change head is required)
-    use_completion_head: bool = False  # Optional: predict level completion
-    use_gameover_head: bool = False  # Optional: predict GAME_OVER avoidance
+    use_completion_head: bool = True  # Optional: predict level completion
+    use_gameover_head: bool = True  # Optional: predict GAME_OVER avoidance
 
     # ============================================================================
     # TRAINING CONFIGURATION
@@ -79,7 +79,7 @@ class InsulaConfig:
     # TODO: enable/disable temporal credit for ablation studies
     temporal_tracing: bool = False  # Train on all timesteps or final only
 
-    # Eligibility Decay Rates (ONLY used when temporal_credit=True)
+    # Temporal Decay Rates (ONLY used when temporal_tracing=True)
     # TODO: enable/disable learned decay for ablation studies
     use_learned_decay: bool = False  # Learn decay rates during training
     change_temporal_decay: float = 1.0  # lower value -> Fast decay for immediate effects?
@@ -155,20 +155,20 @@ class InsulaConfig:
                 f"gameover_context_len ({self.gameover_context_len}) for hierarchical contexts"
             )
 
-        # Validate eligibility decay rates (0, 1]
+        # Validate temporal decay rates (0, 1]
         if not (0 < self.change_temporal_decay <= 1.0):
             raise ValueError(
-                f"change_eligibility_decay ({self.change_temporal_decay}) must be in (0, 1]"
+                f"change_temporal_decay ({self.change_temporal_decay}) must be in (0, 1]"
             )
 
         if not (0 < self.completion_temporal_decay <= 1.0):
             raise ValueError(
-                f"completion_eligibility_decay ({self.completion_temporal_decay}) must be in (0, 1]"
+                f"completion_temporal_decay ({self.completion_temporal_decay}) must be in (0, 1]"
             )
 
         if not (0 < self.gameover_temporal_decay <= 1.0):
             raise ValueError(
-                f"gameover_eligibility_decay ({self.gameover_temporal_decay}) must be in (0, 1]"
+                f"gameover_temporal_decay ({self.gameover_temporal_decay}) must be in (0, 1]"
             )
 
         # Validate replay variation rates [0.5, 1.0]

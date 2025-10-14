@@ -397,35 +397,20 @@ class DecisionModel(nn.Module):
         self.use_completion_head = use_completion_head
         self.use_gameover_head = use_gameover_head
 
-        # Eligibility decay rates (learned or fixed)
-        # Shape: [B, T+1, 4101] - per-timestep logits for all states
+        # Temporal decay rates (learned or fixed)
+        # Store decay rates directly in (0, 1] - config validation ensures valid initialization
+        # Properties will clamp to valid range to handle gradient descent edge cases
         self.use_learned_decay = use_learned_decay
         if use_learned_decay:
             # Learnable parameters (optimized by gradient descent)
-            # Store in logit space for unconstrained optimization, sigmoid ensures [0, 1]
-            self.change_decay_logit = nn.Parameter(
-                torch.tensor(self._decay_to_logit(change_decay_init))
-            )
-            self.completion_decay_logit = nn.Parameter(
-                torch.tensor(self._decay_to_logit(completion_decay_init))
-            )
-            self.gameover_decay_logit = nn.Parameter(
-                torch.tensor(self._decay_to_logit(gameover_decay_init))
-            )
+            self.change_decay_param = nn.Parameter(torch.tensor(change_decay_init))
+            self.completion_decay_param = nn.Parameter(torch.tensor(completion_decay_init))
+            self.gameover_decay_param = nn.Parameter(torch.tensor(gameover_decay_init))
         else:
             # Fixed buffers (saved with checkpoint but not optimized)
-            self.register_buffer(
-                'change_decay_logit',
-                torch.tensor(self._decay_to_logit(change_decay_init))
-            )
-            self.register_buffer(
-                'completion_decay_logit',
-                torch.tensor(self._decay_to_logit(completion_decay_init))
-            )
-            self.register_buffer(
-                'gameover_decay_logit',
-                torch.tensor(self._decay_to_logit(gameover_decay_init))
-            )
+            self.register_buffer('change_decay_param', torch.tensor(change_decay_init))
+            self.register_buffer('completion_decay_param', torch.tensor(completion_decay_init))
+            self.register_buffer('gameover_decay_param', torch.tensor(gameover_decay_init))
 
         # Component modules - Use ViT State Encoder with insular-inspired cell integration
         self.state_encoder = ViTStateEncoder(
@@ -731,44 +716,29 @@ class DecisionModel(nn.Module):
 
             return output  # All [batch, 4101]
 
-    @staticmethod
-    def _decay_to_logit(decay: float) -> float:
-        """Convert decay rate [0, 1] to logit space.
-
-        Logit space allows unconstrained optimization while sigmoid
-        ensures final values stay in valid range (0, 1).
-
-        Args:
-            decay: Decay rate in [0, 1]
-
-        Returns:
-            logit: log(decay / (1 - decay))
-        """
-        return math.log(decay / (1.0 - decay))
-
     @property
     def change_decay(self) -> float:
         """Current change head decay rate (learned or fixed).
 
         Returns:
-            decay: float in (0, 1), sigmoid of stored logit
+            decay: float in (0, 1], clamped to valid range
         """
-        return torch.sigmoid(self.change_decay_logit).item()
+        return torch.clamp(self.change_decay_param, min=1e-7, max=1.0).item()
 
     @property
     def completion_decay(self) -> float:
         """Current completion head decay rate (learned or fixed).
 
         Returns:
-            decay: float in (0, 1), sigmoid of stored logit
+            decay: float in (0, 1], clamped to valid range
         """
-        return torch.sigmoid(self.completion_decay_logit).item()
+        return torch.clamp(self.completion_decay_param, min=1e-7, max=1.0).item()
 
     @property
     def gameover_decay(self) -> float:
         """Current gameover head decay rate (learned or fixed).
 
         Returns:
-            decay: float in (0, 1), sigmoid of stored logit
+            decay: float in (0, 1], clamped to valid range
         """
-        return torch.sigmoid(self.gameover_decay_logit).item()
+        return torch.clamp(self.gameover_decay_param, min=1e-7, max=1.0).item()

@@ -330,7 +330,7 @@ def compute_head_loss_with_temporal_credit(
     Implements continuous forward modeling: each state's prediction is evaluated against its action.
     This matches hippocampal replay where all moments in a sequence get reactivated and updated.
 
-    Each head (change/completion/gameover) has its own eligibility decay rate.
+    Each head (change/completion/gameover) has its own temporal decay rate.
     Includes diversity regularization to encourage exploration.
 
     Args:
@@ -357,7 +357,7 @@ def compute_head_loss_with_temporal_credit(
         # Extract logits for timestep t (state t's prediction)
         logits_t = logits[:, t, :]  # [batch, 4101]
 
-        # Compute eligibility weight (exponential decay from end)
+        # Compute temporal weight (exponential decay from end, hippocampal replay)
         steps_from_end = seq_len - 1 - t
         time_weight = temporal_decay ** steps_from_end
 
@@ -471,7 +471,7 @@ def train_head_batch(
 
     # Compute loss based on temporal_credit config
     if temporal_credit:
-        # Use temporal credit assignment (all actions with eligibility decay)
+        # Use temporal replay weighting (all actions with temporal decay)
         loss = compute_head_loss_with_temporal_credit(
             logits=head_logits,
             all_action_indices=all_action_indices,
