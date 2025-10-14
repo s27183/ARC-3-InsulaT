@@ -54,7 +54,6 @@ from insula_agent.models import DecisionModel
 from insula_agent.trainer import train_model
 from insula_agent.utils import setup_logging
 
-
 class Insula(Agent):
     """Insula agent for ARC-AGI-3.
 
@@ -144,8 +143,8 @@ class Insula(Agent):
         Returns:
             [H, W] tensor with values 0-15, or None if invalid
         """
-        # Convert the frame to a numpy array
-        frame = np.array(latest_frame.frame[-1], dtype=np.int64)
+        # Convert the frame to a numpy array (int8 for memory efficiency - ARC colors are 0-15)
+        frame = np.array(latest_frame.frame[-1], dtype=np.int8)
 
         # Validation: First frame (grid_size not yet detected)
         if self.grid_size is None:
@@ -287,7 +286,7 @@ class Insula(Agent):
     def _has_time_elapsed(self) -> bool:
         """Check if 8 hours have elapsed since start."""
         elapsed_hours = time.time() - self.start_time
-        return elapsed_hours >= 8 * 3600 - 5 * 60  # 8 hours with 5 minute buffer
+        return elapsed_hours >= 4 * 3600 - 5 * 60  # 8 hours with 5 minute buffer
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
         """Decide if the agent is done playing or not."""
@@ -386,8 +385,8 @@ class Insula(Agent):
         )
 
         # Store current frame and action for next experience creation
-        # Keep as integer grid [64, 64] with values 0-15
-        self.prev_frame = current_frame.cpu().numpy().astype(np.int64)
+        # Keep as integer grid [H, W] with values 0-15 (int8 for memory efficiency)
+        self.prev_frame = current_frame.cpu().numpy().astype(np.int8)
 
         # Store unified action index: 0-4 for ACTION1-5, 5+ for coordinates
         if action_idx < 5:
@@ -477,8 +476,8 @@ class Insula(Agent):
 
     def _store_experience(self, current_frame: torch.Tensor, latest_frame: FrameData):
         if self.prev_frame is not None:
-            # Convert current frame to numpy int64 for comparison
-            latest_frame_np = current_frame.cpu().numpy().astype(np.int64)
+            # Convert current frame to numpy int8 for comparison (memory efficient - ARC colors are 0-15)
+            latest_frame_np = current_frame.cpu().numpy().astype(np.int8)
             frame_changed = not np.array_equal(self.prev_frame, latest_frame_np)
             level_completion = latest_frame.score != self.current_score
             # Inverted GAME_OVER: 1.0 = survived (good), 0.0 = GAME_OVER (bad)
@@ -589,8 +588,8 @@ class Insula(Agent):
     def _sample_action(
         self,
         change_logits: torch.Tensor,
-        completion_logits: torch.Tensor | None,  # Can be None if head disabled
-        gameover_logits: torch.Tensor | None,    # Can be None if head disabled
+        completion_logits: None | torch.Tensor ,  # Can be None if head disabled
+        gameover_logits: None | torch.Tensor ,    # Can be None if head disabled
         available_actions=None,
     ) -> tuple[int, tuple | None, int | None]:
         """Sample from combined action space using multiplicative combination of variable heads.
@@ -667,7 +666,7 @@ class Insula(Agent):
         change_action_probs = torch.sigmoid(change_action_logits)  # [5]
         change_coord_probs = torch.sigmoid(change_coord_logits)  # [4096]
 
-        # For fair sampling: treat coordinates as one action type with total prob divided by 4096
+        # Scale coordinate probabilities
         change_coord_probs_scaled = change_coord_probs / self.num_coordinates
 
         # Combine action and coordinate probabilities for change head
@@ -700,18 +699,16 @@ class Insula(Agent):
 
             # CRITICAL: Invert gameover probabilities for avoidance (1.0 - p)
             # gameover_probs predicts "will cause GAME_OVER", we want to AVOID those actions
-            gameover_probs_sampling_inverted = 1.0 - gameover_probs_sampling + 1e-10  # [4101]
+            gameover_probs_sampling_inverted = 1.0 - gameover_probs_sampling  # [4101]
 
             # Multiplicative combination
             probs_sampling = probs_sampling * gameover_probs_sampling_inverted  # [4101]
 
-        # Renormalize after multiplication (to ensure sum=1.0 for np.random.choice)
+        # Renormalize after multiplication (to ensure sum=1.0 for torch.multinomial)
         probs_sampling = probs_sampling / probs_sampling.sum()
 
-        # Sample from normalized space
-        selected_idx = np.random.choice(
-            len(probs_sampling), p=probs_sampling.cpu().numpy()
-        )
+        # Sample from normalized space (stay on GPU for efficiency)
+        selected_idx = torch.multinomial(probs_sampling, num_samples=1).item()
 
         if selected_idx < 5:
             # Selected one of ACTION1-ACTION5
@@ -777,7 +774,9 @@ class Insula(Agent):
             # The model won't rely on this since there's no history anyway
             actions_list.append(0)
             # Add a zero state to maintain sequence structure [s0, a0, s1]
-            states_list = [torch.zeros_like(current_frame)] + states_list
+            # Create zero state explicitly on CPU (consistent with other states from experience buffer)
+            zero_state = torch.zeros(current_frame.shape, dtype=torch.long)
+            states_list = [zero_state] + states_list
 
         # Convert to tensors
         states = (
