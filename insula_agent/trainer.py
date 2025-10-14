@@ -450,13 +450,13 @@ def train_head_batch(
 
     if head_type == "change":
         all_rewards = torch.stack([seq["all_change_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        temporal_decay = config.change_temporal_decay
+        temporal_decay = model.change_decay  # Use model property (learned or fixed)
     elif head_type == "completion":
         all_rewards = torch.stack([seq["all_completion_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        temporal_decay = config.completion_temporal_decay
+        temporal_decay = model.completion_decay  # Use model property (learned or fixed)
     elif head_type == "gameover":
         all_rewards = torch.stack([seq["all_gameover_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        temporal_decay = config.gameover_temporal_decay
+        temporal_decay = model.gameover_decay  # Use model property (learned or fixed)
     else:
         raise ValueError(f"Unknown head_type: {head_type}")
 
