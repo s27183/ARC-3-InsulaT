@@ -77,7 +77,7 @@ class InsulaConfig:
     # ============================================================================
 
     # TODO: enable/disable temporal credit for ablation studies
-    temporal_tracing: bool = False  # Train on all timesteps or final only
+    temporal_tracing: bool = True  # Train on all timesteps or final only
 
     # Temporal Decay Rates (ONLY used when temporal_tracing=True)
     # TODO: enable/disable learned decay for ablation studies
