@@ -322,7 +322,7 @@ def compute_head_loss_with_temporal_credit(
     logits: torch.Tensor,
     all_action_indices: torch.Tensor,
     all_rewards: torch.Tensor,
-    temporal_decay: float,
+    temporal_decay: torch.Tensor,
     config: InsulaConfig,
 ) -> torch.Tensor:
     """Compute loss for a single head with per-timestep predictions and temporal credit assignment.
@@ -461,16 +461,16 @@ def train_head_batch(
         raise ValueError(f"Unknown head_type: {head_type}")
 
     # Forward pass (model in training mode)
-    # Pass temporal_credit flag to control whether to compute all timestep predictions or just final
-    temporal_credit = config.temporal_tracing
-    logits_dict = model(states_batch, actions_batch, temporal_credit=temporal_credit)
+    # Pass temporal_update flag to control whether to compute all timestep predictions or just final
+    temporal_update = config.temporal_update
+    logits_dict = model(states_batch, actions_batch, temporal_credit=temporal_update)
 
     # Extract logits for this head
-    # Shape depends on temporal_credit: [B, seq_len+1, 4101] if True, [B, 4101] if False
+    # Shape depends on temporal_update: [B, seq_len+1, 4101] if True, [B, 4101] if False
     head_logits = logits_dict[f"{head_type}_logits"]
 
-    # Compute loss based on temporal_credit config
-    if temporal_credit:
+    # Compute loss based on temporal_update config
+    if temporal_update:
         # Use temporal replay weighting (all actions with temporal decay)
         loss = compute_head_loss_with_temporal_credit(
             logits=head_logits,
