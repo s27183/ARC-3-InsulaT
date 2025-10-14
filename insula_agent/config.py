@@ -38,7 +38,7 @@ class InsulaConfig:
     gameover_context_len: int = 40  # Failure chains (γ=0.9 → ~44-step effective)
 
     # ViT State Encoder (Spatial Processing)
-    vit_patch_size: int = 8  # Patch size (8×8 = 64 patches for 64×64 grid)
+    vit_patch_size: int = 8  # Default Patch size (8×8 = 64 patches for 64×64 grid) - will be replaced by dynamic patch size per game
     vit_num_layers: int = 4  # ViT transformer layers
     vit_num_heads: int = 8  # ViT attention heads
     vit_dropout: float = 0.1  # ViT dropout rate
@@ -77,9 +77,9 @@ class InsulaConfig:
     # ============================================================================
 
     # TODO: enable/disable temporal credit for ablation studies
-    temporal_tracing: bool = True  # Train on all timesteps or final only
+    temporal_update: bool = False  # Train on all timesteps or final only
 
-    # Temporal Decay Rates (ONLY used when temporal_tracing=True)
+    # Temporal Decay Rates (ONLY used when temporal_update=True)
     # TODO: enable/disable learned decay for ablation studies
     use_learned_decay: bool = False  # Learn decay rates during training
     change_temporal_decay: float = 1.0  # lower value -> Fast decay for immediate effects?
