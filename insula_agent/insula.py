@@ -102,47 +102,17 @@ class Insula(Agent):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.logger.info(f"Insula Agent using device: {self.device}")
 
-        # Model initialization
+        # Load configuration
         self.config = load_config(device=str(self.device))
 
-        self.decision_model = DecisionModel(
-            embed_dim=self.config.embed_dim,
-            num_layers=self.config.num_layers,
-            num_heads=self.config.num_heads,
-            max_context_len=self.config.max_context_len,
-            # ViT encoder parameters
-            vit_cell_embed_dim=self.config.vit_cell_embed_dim,
-            vit_patch_size=self.config.vit_patch_size,
-            vit_num_layers=self.config.vit_num_layers,
-            vit_num_heads=self.config.vit_num_heads,
-            vit_dropout=self.config.vit_dropout,
-            vit_use_cls_token=self.config.vit_use_cls_token,
-            vit_pos_dim_ratio=self.config.vit_pos_dim_ratio,
-            vit_use_patch_pos_encoding=self.config.vit_use_patch_pos_encoding,
-            # Head configuration
-            use_completion_head=self.config.use_completion_head,
-            use_gameover_head=self.config.use_gameover_head,
-            # Learned decay configuration
-            use_learned_decay=self.config.use_learned_decay,
-            change_decay_init=self.config.change_temporal_decay,
-            completion_decay_init=self.config.completion_temporal_decay,
-            gameover_decay_init=self.config.gameover_temporal_decay,
-        ).to(self.device)
+        # Lazy model initialization - deferred until first frame to detect grid size
+        self.decision_model = None  # Will be initialized on first valid frame
+        self.optimizer = None  # Will be initialized with model
 
-        # Set model to eval mode for inference (returns 2D logits [batch, 4101])
-        # Training mode is set in trainer.py (returns 3D logits [batch, seq_len+1, 4101])
-        self.decision_model.eval()
-
-        self.optimizer = torch.optim.Adam(
-            self.decision_model.parameters(),
-            lr=self.config.learning_rate,
-            weight_decay=self.config.weight_decay,
-        )
-
-        # Grid info
-        self.grid_size = 64
-        self.num_coordinates = self.grid_size * self.grid_size
-        self.num_colours = 16
+        # Grid info - will be detected from first frame
+        self.grid_size = None  # Detected dynamically from first frame
+        self.num_coordinates = None  # Calculated after grid_size detection
+        self.num_colours = 16  # Fixed for ARC (0-15 colors)
 
         # Scores as level indicators
         self.current_score = 0
@@ -172,24 +142,147 @@ class Insula(Agent):
             latest_frame: FrameData object with frame data and metadata
 
         Returns:
-            [64, 64] tensor with values 0-15
+            [H, W] tensor with values 0-15, or None if invalid
         """
         # Convert the frame to a numpy array
         frame = np.array(latest_frame.frame[-1], dtype=np.int64)
 
-        try:
-            assert frame.shape == (self.grid_size, self.grid_size)
-        except AssertionError:
-            self.logger.error(
-                f"Error in frame shape: {frame.shape} != {self.grid_size}x{self.grid_size}"
-            )
-            return None
+        # Validation: First frame (grid_size not yet detected)
+        if self.grid_size is None:
+            # Basic validation: ensure it's 2D
+            if frame.ndim != 2:
+                self.logger.error(f"Invalid frame: expected 2D, got shape {frame.shape}")
+                return None
 
-        # Keep as integer tensor: (64, 64) with values 0-15
+            # Validate color values are in range 0-15
+            if frame.max() > 15 or frame.min() < 0:
+                self.logger.error(
+                    f"Invalid frame values: expected 0-15, got range [{frame.min()}, {frame.max()}]"
+                )
+                return None
+        else:
+            # Validation: Subsequent frames (grid_size already detected)
+            if frame.shape != (self.grid_size, self.grid_size):
+                self.logger.error(
+                    f"Frame size mismatch: expected {self.grid_size}×{self.grid_size}, "
+                    f"got {frame.shape[0]}×{frame.shape[1]}"
+                )
+                return None
+
+        # Keep as integer tensor with detected shape
         tensor = torch.from_numpy(frame).long()
 
         return tensor
 
+    def _calculate_patch_size(self, grid_size: int) -> int:
+        """Calculate optimal patch size that divides grid_size evenly.
+
+        Prioritizes patch sizes close to config default (8) for efficiency.
+        Falls back to smaller sizes if needed for divisibility.
+
+        Args:
+            grid_size: Detected grid size (H or W, assumes square grid)
+
+        Returns:
+            patch_size: Patch size that divides grid_size evenly
+        """
+        config_patch_size = self.config.vit_patch_size
+
+        # Try config patch size first
+        if grid_size % config_patch_size == 0:
+            return config_patch_size
+
+        # Try patch sizes in order of preference (decreasing from 32 to 1)
+        candidates = sorted([1, 2, 4, 8, 16, 32], reverse=True)
+
+        for patch_size in candidates:
+            if patch_size <= grid_size and grid_size % patch_size == 0:
+                self.logger.info(
+                    f"Config patch_size={config_patch_size} doesn't divide grid_size={grid_size}. "
+                    f"Using patch_size={patch_size} instead."
+                )
+                return patch_size
+
+        # Fallback: patch_size=1 (each cell is a patch)
+        self.logger.warning(
+            f"No efficient patch size found for grid_size={grid_size}. "
+            f"Using patch_size=1 (slow!)."
+        )
+        return 1
+
+    def _initialize_model_from_frame(self, frame_tensor: torch.Tensor) -> None:
+        """Initialize model dynamically based on detected grid size from first frame.
+
+        Args:
+            frame_tensor: First frame tensor with shape [H, W]
+        """
+        from insula_agent.models import DecisionModel
+
+        # Detect grid size from first frame
+        h, w = frame_tensor.shape[0], frame_tensor.shape[1]
+
+        # Handle non-square grids - use larger dimension for safety
+        if h != w:
+            self.logger.warning(
+                f"Non-square grid detected: {h}×{w}. "
+                f"Using larger dimension: {max(h, w)}"
+            )
+            self.grid_size = max(h, w)
+        else:
+            self.grid_size = h
+
+        self.num_coordinates = self.grid_size * self.grid_size
+
+        # Calculate optimal patch size
+        patch_size = self._calculate_patch_size(self.grid_size)
+
+        self.logger.info(
+            f"🎯 Detected grid size: {h}×{w}. "
+            f"Using grid_size={self.grid_size}, patch_size={patch_size}, "
+            f"num_patches={self.grid_size//patch_size}×{self.grid_size//patch_size}"
+        )
+
+        # Initialize model with detected parameters
+        self.decision_model = DecisionModel(
+            embed_dim=self.config.embed_dim,
+            num_layers=self.config.num_layers,
+            num_heads=self.config.num_heads,
+            max_context_len=self.config.max_context_len,
+            # ViT encoder parameters with dynamic patch size
+            vit_cell_embed_dim=self.config.vit_cell_embed_dim,
+            vit_patch_size=patch_size,  # 🔥 Dynamic based on grid size!
+            vit_num_layers=self.config.vit_num_layers,
+            vit_num_heads=self.config.vit_num_heads,
+            vit_dropout=self.config.vit_dropout,
+            vit_use_cls_token=self.config.vit_use_cls_token,
+            vit_pos_dim_ratio=self.config.vit_pos_dim_ratio,
+            vit_use_patch_pos_encoding=self.config.vit_use_patch_pos_encoding,
+            # Head configuration
+            use_completion_head=self.config.use_completion_head,
+            use_gameover_head=self.config.use_gameover_head,
+            # Learned decay configuration
+            use_learned_decay=self.config.use_learned_decay,
+            change_decay_init=self.config.change_temporal_decay,
+            completion_decay_init=self.config.completion_temporal_decay,
+            gameover_decay_init=self.config.gameover_temporal_decay,
+        ).to(self.device)
+
+        # Set to eval mode for inference (returns 2D logits [batch, 4101])
+        # Training mode is set in trainer.py (returns 3D logits [batch, seq_len+1, 4101])
+        self.decision_model.eval()
+
+        # Initialize optimizer
+        self.optimizer = torch.optim.Adam(
+            self.decision_model.parameters(),
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay,
+        )
+
+        self.logger.info(
+            f"✅ Model initialized successfully: {self.grid_size}×{self.grid_size} grid, "
+            f"patch_size={patch_size}, embed_dim={self.config.embed_dim}, "
+            f"total_params={sum(p.numel() for p in self.decision_model.parameters()):,}"
+        )
 
     def _has_time_elapsed(self) -> bool:
         """Check if 8 hours have elapsed since start."""
@@ -227,6 +320,10 @@ class Insula(Agent):
         current_frame = None
         if latest_frame.state is not GameState.NOT_PLAYED:
             current_frame = self._frame_to_tensor(latest_frame)
+
+            # Lazy initialization: Initialize model on first valid frame
+            if self.decision_model is None and current_frame is not None:
+                self._initialize_model_from_frame(current_frame)
 
             # Store unique experience
             if current_frame is not None:
