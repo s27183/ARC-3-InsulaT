@@ -50,8 +50,8 @@ class InsulaConfig:
     # Multi-Head Prediction Architecture
     # TODO: enable/disable learned heads for ablation studies
     use_change_head: bool = True  # Always True (change head is required)
-    use_completion_head: bool = True  # Optional: predict level completion
-    use_gameover_head: bool = True  # Optional: predict GAME_OVER avoidance
+    use_completion_head: bool = True  # Predict level completion (trajectory-level rewards)
+    use_gameover_head: bool = True  # Predict GAME_OVER avoidance (trajectory-level rewards)
 
     # ============================================================================
     # TRAINING CONFIGURATION
@@ -73,18 +73,39 @@ class InsulaConfig:
     coord_entropy_coeff: float = 0.00001  # Entropy coefficient for coordinates
 
     # ============================================================================
-    # TEMPORAL CREDIT ASSIGNMENT
+    # MULTI-TIMESTEP FORWARD PREDICTION
     # ============================================================================
 
-    # TODO: enable/disable temporal credit for ablation studies
-    temporal_update: bool = False  # Train on all timesteps or final only
+    # Enable training on all timesteps vs final timestep only
+    # When True: Model predicts at ALL states in sequence (PAST + PRESENT forward predictions)
+    # When False: Model predicts only at final state (PRESENT forward prediction only)
+    # Recommendation: True (provides k+1 training signals per sequence, improves representations)
+    temporal_update: bool = True
 
-    # Temporal Decay Rates (ONLY used when temporal_update=True)
-    # TODO: enable/disable learned decay for ablation studies
-    use_learned_decay: bool = False  # Learn decay rates during training
-    change_temporal_decay: float = 1.0  # lower value -> Fast decay for immediate effects?
-    completion_temporal_decay: float = 1.0  # higher value -> Medium decay for goal sequences?
-    gameover_temporal_decay: float = 1.0  # highest value -> Slow decay for failure chains
+    # Temporal Weighting (ONLY used when temporal_update=True)
+    # Controls relative weighting of predictions at different timesteps in sequence
+    # γ = 1.0: Equal weighting (all predictions contribute equally)
+    # γ < 1.0: Recency bias (recent predictions weighted more heavily)
+    #
+    # Head-Specific Rationale:
+    # - Change head (γ=1.0): Action-level rewards with immediate causality
+    #   → Each (state, action, change_reward) tuple independently valid
+    #   → No temporal structure needed for direct cause-effect
+    #
+    # - Completion head (γ=0.8): Trajectory-level rewards (all actions get credit)
+    #   → Early actions may be exploratory/incidental, not goal-directed
+    #   → Moderate recency bias denoises: recent actions more likely critical
+    #
+    # - Gameover head (γ=0.9): Trajectory-level rewards (all actions penalized)
+    #   → Failure causality can be immediate OR delayed
+    #   → Mild recency bias balances immediate vs cascading failures
+    #
+    # Memory Reconsolidation: Buffer stores action-level rewards, replay assigns
+    # trajectory-level rewards (matches hippocampal replay + dopamine modulation)
+    use_learned_decay: bool = False  # Learn decay rates during training (experimental)
+    change_temporal_decay: float = 1.0  # Action-level rewards → no decay needed
+    completion_temporal_decay: float = 0.8  # Trajectory rewards → moderate recency bias
+    gameover_temporal_decay: float = 0.9  # Trajectory rewards → mild recency bias
 
     # ============================================================================
     # EXPERIENCE REPLAY
@@ -92,6 +113,14 @@ class InsulaConfig:
 
     # Buffer Management
     max_buffer_size: int = 200000  # Maximum experience buffer size
+
+    # Trajectory Reward Assignment (Memory Reconsolidation)
+    # When enabled: Assign trajectory-level rewards during replay, not in buffer
+    # - Completion: All actions in successful sequence get reward=1.0
+    # - Gameover: All actions in failed sequence get reward=0.0
+    # - Change: Keeps action-level rewards (immediate causality)
+    # Matches biological mechanism: Dopamine modulates replayed sequences (Gomperts et al., 2015)
+    use_trajectory_rewards: bool = True  # Enable reward revaluation during replay
 
     # Head-Specific Replay Sizes (Importance-Weighted Sampling)
     change_replay_size: int = 16  # Change is frequent → small batch
