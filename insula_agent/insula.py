@@ -262,9 +262,9 @@ class Insula(Agent):
             use_gameover_head=self.config.use_gameover_head,
             # Learned decay configuration
             use_learned_decay=self.config.use_learned_decay,
-            change_decay_init=self.config.change_temporal_decay,
-            completion_decay_init=self.config.completion_temporal_decay,
-            gameover_decay_init=self.config.gameover_temporal_decay,
+            change_decay_init=self.config.change_temporal_update_decay,
+            completion_decay_init=self.config.completion_temporal_update_decay,
+            gameover_decay_init=self.config.gameover_temporal_update_decay,
         ).to(self.device)
 
         # Set to eval mode for inference (returns 2D logits [batch, 4102])
@@ -287,14 +287,14 @@ class Insula(Agent):
     def _has_time_elapsed(self) -> bool:
         """Check if 8 hours have elapsed since start."""
         elapsed_hours = time.time() - self.start_time
-        return elapsed_hours >= 4 * 3600 - 5 * 60  # 8 hours with 5 minute buffer
+        return elapsed_hours >= 5 * 3600 - 5 * 60  # 8 hours with 5 minute buffer
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
         """Decide if the agent is done playing or not."""
 
         # Keep track of the number of wins
         if latest_frame.state is GameState.WIN:
-            self.win_counter += 1
+            self.logger.info(f"Game {self.game_id} won!")
 
         return any(
             [
