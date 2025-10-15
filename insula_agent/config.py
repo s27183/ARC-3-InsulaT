@@ -30,12 +30,12 @@ class InsulaConfig:
     embed_dim: int = 256  # Transformer embedding dimension
     num_layers: int = 4  # Number of transformer layers
     num_heads: int = 8  # Number of attention heads
-    max_context_len: int = 40  # Maximum positional embedding capacity
+    max_context_len: int = 100  # Maximum positional embedding capacity
 
     # Hierarchical Context Windows (Head-Specific)
-    change_context_len: int = 5  # Immediate effects (γ=0.7 → ~13-step effective)
-    completion_context_len: int = 20  # Goal sequences (γ=0.8 → ~21-step effective)
-    gameover_context_len: int = 40  # Failure chains (γ=0.9 → ~44-step effective)
+    change_context_len: int = 10  # Immediate effects (γ=0.7 → ~13-step effective)
+    completion_context_len: int = 50  # Goal sequences (γ=0.8 → ~21-step effective)
+    gameover_context_len: int = 100  # Failure chains (γ=0.9 → ~44-step effective)
 
     # ViT State Encoder (Spatial Processing)
     vit_patch_size: int = 8  # Default Patch size (8×8 = 64 patches for 64×64 grid) - will be replaced by dynamic patch size per game
@@ -50,8 +50,8 @@ class InsulaConfig:
     # Multi-Head Prediction Architecture
     # TODO: enable/disable learned heads for ablation studies
     use_change_head: bool = True  # Always True (change head is required)
-    use_completion_head: bool = True  # Predict level completion (trajectory-level rewards)
-    use_gameover_head: bool = True  # Predict GAME_OVER avoidance (trajectory-level rewards)
+    use_completion_head: bool = False  # Predict level completion (trajectory-level rewards)
+    use_gameover_head: bool = False  # Predict GAME_OVER avoidance (trajectory-level rewards)
 
     # ============================================================================
     # TRAINING CONFIGURATION
@@ -277,11 +277,11 @@ def gpu_config() -> InsulaConfig:
         embed_dim=256,
         num_layers=4,
         num_heads=8,
-        max_context_len=40,  # Same for CPU/GPU (positional embedding capacity)
+        max_context_len=100,  # Same for CPU/GPU (positional embedding capacity)
         # Hierarchical context windows
-        change_context_len=5,
-        completion_context_len=20,
-        gameover_context_len=40,  # = max_context_len
+        change_context_len=10,
+        completion_context_len=50,
+        gameover_context_len=100,  # = max_context_len
         # ViT architecture
         vit_num_layers=4,
         vit_num_heads=8,
