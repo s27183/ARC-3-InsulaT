@@ -332,26 +332,17 @@ def create_gameover_sequences(
 # Loss Computation Functions
 # ============================================================================
 
-def compute_head_loss(
-    head_logits: torch.Tensor,
-    target_actions: torch.Tensor,
-    rewards: torch.Tensor,
-    config: InsulaConfig,
-) -> torch.Tensor:
+def compute_head_loss(head_logits: torch.Tensor, target_actions: torch.Tensor, rewards: torch.Tensor) -> torch.Tensor:
     """Compute loss for a single head WITHOUT temporal credit (only final action).
-
-    This function includes diversity regularization to encourage exploration.
 
     Args:
         head_logits: [batch, 4102] - Predicted logits for this head
         target_actions: [batch] - Final action indices (scalar per sequence)
         rewards: [batch] - Final rewards for this head (1.0 or 0.0)
-        config: Configuration dictionary with:
-            - "action_entropy_coeff": float (default 0.0001)
-            - "coord_entropy_coeff": float (default 0.00001)
+
 
     Returns:
-        loss: Scalar loss tensor with diversity regularization
+        loss: Scalar loss tensor (binary cross-entropy)
     """
     # Gather only the logits for final actions
     selected_logits = head_logits.gather(
@@ -359,57 +350,28 @@ def compute_head_loss(
     ).squeeze(1)  # [batch]
 
     # Binary cross-entropy with rewards as binary labels
-    bce_loss = F.binary_cross_entropy_with_logits(selected_logits, rewards)
-
-    # Add action diversity regularization (encourage exploring more actions)
-    probs = torch.sigmoid(head_logits)  # [batch, 4102]
-
-    # Split into action and coordinate spaces
-    action_probs = probs[:, :6]      # [batch, 6]
-    coord_probs = probs[:, 6:]       # [batch, 4096]
-
-    # Calculate diversity bonus (mean probability)
-    # Higher mean = model considers more actions viable = more diversity
-    action_diversity = action_probs.mean(dim=1).mean(dim=0)
-    coord_diversity = coord_probs.mean(dim=1).mean(dim=0)
-
-    # Diversity coefficients (configurable)
-    action_coeff = config.action_entropy_coeff
-    coord_coeff = config.coord_entropy_coeff
-
-    # Total loss with diversity regularization
-    # Subtracting encourages higher mean probability = more action diversity
-    loss = bce_loss - action_coeff * action_diversity - coord_coeff * coord_diversity
+    loss = F.binary_cross_entropy_with_logits(selected_logits, rewards)
 
     return loss
 
 
-def compute_head_loss_with_temporal_credit(
-    logits: torch.Tensor,
-    all_action_indices: torch.Tensor,
-    all_rewards: torch.Tensor,
-    temporal_decay: torch.Tensor,
-    config: InsulaConfig,
-) -> torch.Tensor:
+def compute_head_loss_with_temporal_credit(logits: torch.Tensor, all_action_indices: torch.Tensor,
+                                           all_rewards: torch.Tensor, temporal_update_decay: torch.Tensor) -> torch.Tensor:
     """Compute loss for a single head with per-timestep predictions and temporal credit assignment.
 
     Implements continuous forward modeling: each state's prediction is evaluated against its action.
     This matches hippocampal replay where all moments in a sequence get reactivated and updated.
 
     Each head (change/completion/gameover) has its own temporal decay rate.
-    Includes diversity regularization to encourage exploration.
 
     Args:
         logits: [batch, seq_len+1, 4102] - Predicted logits at each state (training mode)
         all_action_indices: [batch, seq_len+1] - ALL actions in sequence
         all_rewards: [batch, seq_len+1] - Rewards for this head (1.0 or 0.0)
-        temporal_decay: Head-specific decay rate (0.7, 0.8, or 0.9)
-        config: Configuration dictionary with:
-            - "action_entropy_coeff": float (default 0.0001)
-            - "coord_entropy_coeff": float (default 0.00001)
+        temporal_update_decay: Head-specific decay rate (1.0, 0.8, or 0.9)
 
     Returns:
-        loss: Scalar loss tensor with diversity regularization
+        loss: Scalar loss tensor (temporally weighted binary cross-entropy)
     """
     batch_size = logits.shape[0]
     seq_len = all_action_indices.shape[1]  # seq_len+1 states
@@ -425,7 +387,7 @@ def compute_head_loss_with_temporal_credit(
 
         # Compute temporal weight (exponential decay from end, hippocampal replay)
         steps_from_end = seq_len - 1 - t
-        time_weight = temporal_decay ** steps_from_end
+        time_weight = temporal_update_decay ** steps_from_end
 
         # Get action at timestep t
         action_t = all_action_indices[:, t]  # [batch]
@@ -450,28 +412,7 @@ def compute_head_loss_with_temporal_credit(
         total_weight += time_weight * batch_size
 
     # Normalize by cumulative weight
-    bce_loss = total_loss / total_weight
-
-    # Add action diversity regularization (use final timestep logits)
-    final_logits = logits[:, -1, :]  # [batch, 4102]
-    probs = torch.sigmoid(final_logits)
-
-    # Split into action and coordinate spaces
-    action_probs = probs[:, :6]      # [batch, 6]
-    coord_probs = probs[:, 6:]       # [batch, 4096]
-
-    # Calculate diversity bonus (mean probability)
-    # Higher mean = model considers more actions viable = more diversity
-    action_diversity = action_probs.mean(dim=1).mean(dim=0)
-    coord_diversity = coord_probs.mean(dim=1).mean(dim=0)
-
-    # Diversity coefficients (configurable)
-    action_coeff = config.action_entropy_coeff
-    coord_coeff = config.coord_entropy_coeff
-
-    # Total loss with diversity regularization
-    # Subtracting encourages higher mean probability = more action diversity
-    loss = bce_loss - action_coeff * action_diversity - coord_coeff * coord_diversity
+    loss = total_loss / total_weight
 
     return loss
 
@@ -538,24 +479,14 @@ def train_head_batch(
     # Compute loss based on temporal_update config
     if temporal_update:
         # Use temporal replay weighting (all actions with temporal decay)
-        loss = compute_head_loss_with_temporal_credit(
-            logits=head_logits,
-            all_action_indices=all_action_indices,
-            all_rewards=all_rewards,
-            temporal_decay=temporal_decay,
-            config=config,
-        )
+        loss = compute_head_loss_with_temporal_credit(logits=head_logits, all_action_indices=all_action_indices,
+                                                      all_rewards=all_rewards, temporal_update_decay=temporal_decay)
     else:
         # Use only final action (no temporal credit)
         target_actions = all_action_indices[:, -1]  # [B] - final action
         rewards = all_rewards[:, -1]  # [B] - final reward
 
-        loss = compute_head_loss(
-            head_logits=head_logits,
-            target_actions=target_actions,
-            rewards=rewards,
-            config=config,
-        )
+        loss = compute_head_loss(head_logits=head_logits, target_actions=target_actions, rewards=rewards)
 
     # Backward pass (gradients accumulate in model.parameters())
     loss.backward()
