@@ -33,9 +33,9 @@ class InsulaConfig:
     max_context_len: int = 100  # Maximum positional embedding capacity
 
     # Hierarchical Context Windows (Head-Specific)
-    change_context_len: int = 10  # Immediate effects (γ=0.7 → ~13-step effective)
-    completion_context_len: int = 50  # Goal sequences (γ=0.8 → ~21-step effective)
-    gameover_context_len: int = 100  # Failure chains (γ=0.9 → ~44-step effective)
+    change_context_len: int = 10  # Immediate effects
+    completion_context_len: int = 50  # Goal sequences
+    gameover_context_len: int = 100  # Failure chains
 
     # ViT State Encoder (Spatial Processing)
     vit_patch_size: int = 8  # Default Patch size (8×8 = 64 patches for 64×64 grid) - will be replaced by dynamic patch size per game
@@ -68,10 +68,6 @@ class InsulaConfig:
     epochs_per_training: int = 1  # Number of epochs per training session
     min_buffer_size: int = 5  # Minimum experience buffer size to start training
 
-    # Loss Function
-    action_entropy_coeff: float = 0.0001  # Entropy coefficient for discrete actions
-    coord_entropy_coeff: float = 0.00001  # Entropy coefficient for coordinates
-
     # ============================================================================
     # MULTI-TIMESTEP FORWARD PREDICTION
     # ============================================================================
@@ -103,9 +99,9 @@ class InsulaConfig:
     # Memory Reconsolidation: Buffer stores action-level rewards, replay assigns
     # trajectory-level rewards (matches hippocampal replay + dopamine modulation)
     use_learned_decay: bool = False  # Learn decay rates during training (experimental)
-    change_temporal_decay: float = 1.0  # Action-level rewards → no decay needed
-    completion_temporal_decay: float = 0.8  # Trajectory rewards → moderate recency bias
-    gameover_temporal_decay: float = 0.9  # Trajectory rewards → mild recency bias
+    change_temporal_update_decay: float = 1.0  # Action-level rewards → no decay needed, should keep at 1.0
+    completion_temporal_update_decay: float = 0.8  # Trajectory rewards → moderate recency bias, should be less than 1
+    gameover_temporal_update_decay: float = 0.9  # Trajectory rewards → mild recency bias, should be less than 1
 
     # ============================================================================
     # EXPERIENCE REPLAY
@@ -185,19 +181,19 @@ class InsulaConfig:
             )
 
         # Validate temporal decay rates (0, 1]
-        if not (0 < self.change_temporal_decay <= 1.0):
+        if not (0 < self.change_temporal_update_decay <= 1.0):
             raise ValueError(
-                f"change_temporal_decay ({self.change_temporal_decay}) must be in (0, 1]"
+                f"change_temporal_decay ({self.change_temporal_update_decay}) must be in (0, 1]"
             )
 
-        if not (0 < self.completion_temporal_decay <= 1.0):
+        if not (0 < self.completion_temporal_update_decay <= 1.0):
             raise ValueError(
-                f"completion_temporal_decay ({self.completion_temporal_decay}) must be in (0, 1]"
+                f"completion_temporal_decay ({self.completion_temporal_update_decay}) must be in (0, 1]"
             )
 
-        if not (0 < self.gameover_temporal_decay <= 1.0):
+        if not (0 < self.gameover_temporal_update_decay <= 1.0):
             raise ValueError(
-                f"gameover_temporal_decay ({self.gameover_temporal_decay}) must be in (0, 1]"
+                f"gameover_temporal_decay ({self.gameover_temporal_update_decay}) must be in (0, 1]"
             )
 
         # Validate replay variation rates [0.5, 1.0]
