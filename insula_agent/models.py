@@ -342,17 +342,17 @@ class ViTStateEncoder(nn.Module):
         return state_repr
 
 class ActionEmbedding(nn.Module):
-    """Action embedding for 4101 action vocabulary: ACTION1-5 + coordinates."""
+    """Action embedding for 4102 action vocabulary: ACTION1-5, ACTION7 + coordinates."""
 
     def __init__(self, embed_dim=256):
         super().__init__()
-        # 4101 actions: ACTION1-5 (indices 0-4) + coordinates (indices 5-4100)
-        self.action_embedding = nn.Embedding(4101, embed_dim)
+        # 4102 actions: ACTION1-5 (indices 0-4) + ACTION7 (index 5) + coordinates (indices 6-4101)
+        self.action_embedding = nn.Embedding(4102, embed_dim)
 
     def forward(self, action_indices):
         """
         Args:
-            action_indices: [batch, seq_len] with values in [0, 4100]
+            action_indices: [batch, seq_len] with values in [0, 4101]
         Returns:
             action_embeddings: [batch, seq_len, embed_dim]
         """
@@ -444,13 +444,13 @@ class DecisionModel(nn.Module):
         )
         self.transformer = nn.TransformerDecoder(decoder_layer, num_layers)
 
-        # Action head for predicting changes caused by discrete actions (ACTION1-5)
+        # Action head for predicting changes caused by discrete actions (ACTION1-5, ACTION7)
         self.change_action_head = nn.Sequential(
             nn.LayerNorm(embed_dim),
             nn.Linear(embed_dim, embed_dim // 2),
             nn.GELU(),
             nn.Dropout(0.1),
-            nn.Linear(embed_dim // 2, 5),  # ACTION1-5
+            nn.Linear(embed_dim // 2, 6),  # ACTION1-5, ACTION7
         )
 
         # Coordinate head for predicting changes caused by spatial actions (64x64 coordinates)
@@ -464,13 +464,13 @@ class DecisionModel(nn.Module):
 
         # Completion head (optional: predict level completion)
         if self.use_completion_head:
-            # Action head for predicting level completion caused by discrete actions (ACTION1-5)
+            # Action head for predicting level completion caused by discrete actions (ACTION1-5, ACTION7)
             self.completion_action_head = nn.Sequential(
                 nn.LayerNorm(embed_dim),
                 nn.Linear(embed_dim, embed_dim // 2),
                 nn.GELU(),
                 nn.Dropout(0.1),
-                nn.Linear(embed_dim // 2, 5),
+                nn.Linear(embed_dim // 2, 6),  # ACTION1-5, ACTION7
             )
 
             # Coordinate head for predicting level completion caused by spatial actions (64x64 coordinates)
@@ -484,13 +484,13 @@ class DecisionModel(nn.Module):
 
         # GAME_OVER head (optional: predict GAME_OVER avoidance)
         if self.use_gameover_head:
-            # Action head for predicting GAME_OVER caused by discrete actions (ACTION1-5)
+            # Action head for predicting GAME_OVER caused by discrete actions (ACTION1-5, ACTION7)
             self.gameover_action_head = nn.Sequential(
                 nn.LayerNorm(embed_dim),
                 nn.Linear(embed_dim, embed_dim // 2),
                 nn.GELU(),
                 nn.Dropout(0.1),
-                nn.Linear(embed_dim // 2, 5),  # ACTION1-5
+                nn.Linear(embed_dim // 2, 6),  # ACTION1-5, ACTION7
             )
 
             # Coordinate head for predicting GAME_OVER caused by spatial actions (64x64 coordinates)
@@ -547,16 +547,16 @@ class DecisionModel(nn.Module):
 
         Args:
             states: [batch, seq_len+1, 64, 64] - k+1 integer grids with cell values 0-15 (past + current)
-            actions: [batch, seq_len] - k past actions (0-4100)
+            actions: [batch, seq_len] - k past actions (0-4101)
             temporal_credit: bool - If True, compute predictions at all timesteps for temporal credit assignment.
                                    If False, compute only final prediction (more memory efficient).
                                    Only used in training mode. Ignored during inference.
 
         Returns:
             dict[str, torch.Tensor]:
-                - Training mode with temporal_credit=True: {"change_logits": [batch, seq_len+1, 4101], ...}
-                - Training mode with temporal_credit=False: {"change_logits": [batch, 4101], ...}
-                - Inference mode: {"change_logits": [batch, 4101], ...}
+                - Training mode with temporal_credit=True: {"change_logits": [batch, seq_len+1, 4102], ...}
+                - Training mode with temporal_credit=False: {"change_logits": [batch, 4102], ...}
+                - Inference mode: {"change_logits": [batch, 4102], ...}
         """
         # Build interleaved state-action sequence
         sequence = self.build_state_action_sequence(states, actions)
@@ -589,7 +589,7 @@ class DecisionModel(nn.Module):
                 )  # [batch, seq_len+1, 4096] - coordinates at each state
                 change_logits = torch.cat(
                     [change_action_logits, change_coord_logits], dim=2
-                )  # [batch, seq_len+1, 4101] - concat on dim=2 for 3D tensors
+                )  # [batch, seq_len+1, 4102] - concat on dim=2 for 3D tensors
 
                 # Build output dict - always include change logits
                 output = {"change_logits": change_logits}
@@ -604,23 +604,23 @@ class DecisionModel(nn.Module):
                     )  # [batch, seq_len+1, 4096]
                     completion_logits = torch.cat(
                         [completion_action_logits, completion_coord_logits], dim=2
-                    )  # [batch, seq_len+1, 4101]
+                    )  # [batch, seq_len+1, 4102]
                     output["completion_logits"] = completion_logits
 
                 # GAME_OVER head (optional)
                 if self.use_gameover_head:
                     gameover_action_logits = self.gameover_action_head(
                         state_reprs
-                    )  # [batch, seq_len+1, 5]
+                    )  # [batch, seq_len+1, 6]
                     gameover_coord_logits = self.gameover_coord_head(
                         state_reprs
                     )  # [batch, seq_len+1, 4096]
                     gameover_logits = torch.cat(
                         [gameover_action_logits, gameover_coord_logits], dim=2
-                    )  # [batch, seq_len+1, 4101]
+                    )  # [batch, seq_len+1, 4102]
                     output["gameover_logits"] = gameover_logits
 
-                return output  # All [batch, seq_len+1, 4101]
+                return output  # All [batch, seq_len+1, 4102]
 
             else:
                 # Prediction at FINAL state only (memory efficient)
@@ -636,7 +636,7 @@ class DecisionModel(nn.Module):
                 )  # [batch, 4096] - coordinates
                 change_logits = torch.cat(
                     [change_action_logits, change_coord_logits], dim=1
-                )  # [batch, 4101] - concat on dim=1 for 2D tensors
+                )  # [batch, 4102] - concat on dim=1 for 2D tensors
 
                 # Build output dict - always include change logits
                 output = {"change_logits": change_logits}
@@ -645,29 +645,29 @@ class DecisionModel(nn.Module):
                 if self.use_completion_head:
                     completion_action_logits = self.completion_action_head(
                         final_repr
-                    )  # [batch, 5]
+                    )  # [batch, 6]
                     completion_coord_logits = self.completion_coord_head(
                         final_repr
                     )  # [batch, 4096]
                     completion_logits = torch.cat(
                         [completion_action_logits, completion_coord_logits], dim=1
-                    )  # [batch, 4101]
+                    )  # [batch, 4102]
                     output["completion_logits"] = completion_logits
 
                 # GAME_OVER head (optional)
                 if self.use_gameover_head:
                     gameover_action_logits = self.gameover_action_head(
                         final_repr
-                    )  # [batch, 5]
+                    )  # [batch, 6]
                     gameover_coord_logits = self.gameover_coord_head(
                         final_repr
                     )  # [batch, 4096]
                     gameover_logits = torch.cat(
                         [gameover_action_logits, gameover_coord_logits], dim=1
-                    )  # [batch, 4101]
+                    )  # [batch, 4102]
                     output["gameover_logits"] = gameover_logits
 
-                return output  # All [batch, 4101]
+                return output  # All [batch, 4102]
 
         else:
             # === INFERENCE MODE: Prediction at FINAL state only (real-time forward modeling) ===
@@ -677,13 +677,13 @@ class DecisionModel(nn.Module):
             # Multi-head prediction - Change head (always present)
             change_action_logits = self.change_action_head(
                 final_repr
-            )  # [batch, 5] - ACTION1-5
+            )  # [batch, 6] - ACTION1-5, ACTION7
             change_coord_logits = self.change_coord_head(
                 final_repr
             )  # [batch, 4096] - coordinates
             change_logits = torch.cat(
                 [change_action_logits, change_coord_logits], dim=1
-            )  # [batch, 4101] - concat on dim=1 for 2D tensors
+            )  # [batch, 4102] - concat on dim=1 for 2D tensors
 
             # Build output dict - always include change logits
             output = {"change_logits": change_logits}
@@ -692,29 +692,29 @@ class DecisionModel(nn.Module):
             if self.use_completion_head:
                 completion_action_logits = self.completion_action_head(
                     final_repr
-                )  # [batch, 5]
+                )  # [batch, 6]
                 completion_coord_logits = self.completion_coord_head(
                     final_repr
                 )  # [batch, 4096]
                 completion_logits = torch.cat(
                     [completion_action_logits, completion_coord_logits], dim=1
-                )  # [batch, 4101]
+                )  # [batch, 4102]
                 output["completion_logits"] = completion_logits
 
             # GAME_OVER head (optional)
             if self.use_gameover_head:
                 gameover_action_logits = self.gameover_action_head(
                     final_repr
-                )  # [batch, 5]
+                )  # [batch, 6]
                 gameover_coord_logits = self.gameover_coord_head(
                     final_repr
                 )  # [batch, 4096]
                 gameover_logits = torch.cat(
                     [gameover_action_logits, gameover_coord_logits], dim=1
-                )  # [batch, 4101]
+                )  # [batch, 4102]
                 output["gameover_logits"] = gameover_logits
 
-            return output  # All [batch, 4101]
+            return output  # All [batch, 4102]
 
     @property
     def change_decay(self) -> float:
