@@ -14,7 +14,7 @@ Architecture (Five-Level Hierarchy):
 
 Components:
 - ViT State Encoder: Patch-based attention (8×8 patches) with learnable per-patch alpha
-- Action Embedding: Learned embeddings for 4101 actions (ACTION1-5 + 64x64 coordinates)
+- Action Embedding: Learned embeddings for 4102 actions (ACTION1-5, ACTION7 + 64x64 coordinates)
 - Decision Transformer: Causal attention over state-action sequences
 - Triple-Head Prediction: Change (exploration) + Completion (goal) + GAME_OVER (safety)
 - Multiplicative Action Sampling: Combines all three heads for balanced decisions
@@ -131,6 +131,7 @@ class Insula(Agent):
             GameAction.ACTION3,
             GameAction.ACTION4,
             GameAction.ACTION5,
+            GameAction.ACTION7,  # Add ACTION7
         ]
         self.logger.info(f"Insula Agent initialized for game_id: {self.game_id}")
 
@@ -266,8 +267,8 @@ class Insula(Agent):
             gameover_decay_init=self.config.gameover_temporal_decay,
         ).to(self.device)
 
-        # Set to eval mode for inference (returns 2D logits [batch, 4101])
-        # Training mode is set in trainer.py (returns 3D logits [batch, seq_len+1, 4101])
+        # Set to eval mode for inference (returns 2D logits [batch, 4102])
+        # Training mode is set in trainer.py (returns 3D logits [batch, seq_len+1, 4102])
         self.decision_model.eval()
 
         # Initialize optimizer
@@ -388,11 +389,11 @@ class Insula(Agent):
         # Keep as integer grid [H, W] with values 0-15 (int8 for memory efficiency)
         self.prev_frame = current_frame.cpu().numpy().astype(np.int8)
 
-        # Store unified action index: 0-4 for ACTION1-5, 5+ for coordinates
-        if action_idx < 5:
+        # Store unified action index: 0-4 for ACTION1-5, 5 for ACTION7, 6+ for coordinates
+        if action_idx < 6:  # Changed: 5 → 6
             self.prev_action_idx = action_idx
         else:
-            self.prev_action_idx = 5 + coord_idx  # Unified action space
+            self.prev_action_idx = 6 + coord_idx  # Changed: 5 → 6 (coordinate offset)
 
         # Increment action counter
         self.action_counter += 1
@@ -536,10 +537,13 @@ class Insula(Agent):
                 )
                 # Set default values for tracking
                 if selected_action.value <= 5:
-                    action_idx = selected_action.value - 1
+                    action_idx = selected_action.value - 1  # ACTION1-5 → indices 0-4
                     coord_idx = None
-                else:
-                    action_idx = 5
+                elif selected_action.value == 7:
+                    action_idx = 5  # ACTION7 → index 5
+                    coord_idx = None
+                else:  # ACTION6
+                    action_idx = 6  # Changed: 5 → 6 (coordinate offset)
                     coord_idx = 0
             else:
                 # Build state-action sequence for inference
@@ -551,17 +555,17 @@ class Insula(Agent):
                 logits = self.decision_model(states, actions)
 
                 # Always get change logits (required)
-                change_logits = logits["change_logits"].squeeze(0)  # [4101]
+                change_logits = logits["change_logits"].squeeze(0)  # [4102]
 
                 # Conditionally get completion logits (optional)
                 completion_logits = None
                 if "completion_logits" in logits:
-                    completion_logits = logits["completion_logits"].squeeze(0)  # [4101]
+                    completion_logits = logits["completion_logits"].squeeze(0)  # [4102]
 
                 # Conditionally get gameover logits (optional)
                 gameover_logits = None
                 if "gameover_logits" in logits:
-                    gameover_logits = logits["gameover_logits"].squeeze(0)  # [4101]
+                    gameover_logits = logits["gameover_logits"].squeeze(0)  # [4102]
 
                 # Sample from combined action space (multiplicative combination with variable heads)
                 action_idx, coords, coord_idx = self._sample_action(
@@ -569,8 +573,8 @@ class Insula(Agent):
                 )
 
                 # Create GameAction directly (following bandit pattern exactly)
-                if action_idx < 5:
-                    # Selected ACTION1-ACTION5
+                if action_idx < 6:  # Changed: 5 → 6
+                    # Selected ACTION1-ACTION5 or ACTION7
                     selected_action = self.action_list[action_idx]
                     selected_action.reasoning = "discrete action prediction"
                 else:
@@ -595,39 +599,47 @@ class Insula(Agent):
         """Sample from combined action space using multiplicative combination of variable heads.
 
         Args:
-            change_logits: [4101] - Logits for predicting frame changes (always present)
-            completion_logits: [4101] or None - Logits for predicting level completion (optional)
-            gameover_logits: [4101] or None - Logits for predicting GAME_OVER (optional, inverted for avoidance)
+            change_logits: [4102] - Logits for predicting frame changes (always present)
+            completion_logits: [4102] or None - Logits for predicting level completion (optional)
+            gameover_logits: [4102] or None - Logits for predicting survival probability (optional)
             available_actions: List of available actions for masking
 
         Returns:
             action_idx: Index of selected action
             coords: Coordinates if ACTION6 selected
             coord_idx: Flattened coordinate index
+
+        Reward Semantics:
+            - change_reward: 1.0 = grid changed (productive), 0.0 = no change
+            - completion_reward: 1.0 = level completed, 0.0 = not completed
+            - gameover_reward: 1.0 = survived (good), 0.0 = died (bad)
+
+        All heads predict probabilities of POSITIVE outcomes (higher is better).
+        Multiplicative combination prefers actions scoring high on all enabled heads.
         """
         # Split change logits (always present)
-        change_action_logits = change_logits[:5]  # [5]
-        change_coord_logits = change_logits[5:]  # [4096]
+        change_action_logits = change_logits[:6]  # [6] - includes ACTION7
+        change_coord_logits = change_logits[6:]  # [4096]
 
         # Split completion logits if present
         if completion_logits is not None:
-            completion_action_logits = completion_logits[:5]  # [5]
-            completion_coord_logits = completion_logits[5:]  # [4096]
+            completion_action_logits = completion_logits[:6]  # [6] - includes ACTION7
+            completion_coord_logits = completion_logits[6:]  # [4096]
         else:
             completion_action_logits = None
             completion_coord_logits = None
 
         # Split gameover logits if present
         if gameover_logits is not None:
-            gameover_action_logits = gameover_logits[:5]  # [5]
-            gameover_coord_logits = gameover_logits[5:]  # [4096]
+            gameover_action_logits = gameover_logits[:6]  # [6] - includes ACTION7
+            gameover_coord_logits = gameover_logits[6:]  # [4096]
         else:
             gameover_action_logits = None
             gameover_coord_logits = None
 
         # Apply masking based on available_actions if provided
         if available_actions is not None and len(available_actions) > 0:
-            # Create mask for action logits (ACTION1-ACTION5 = indices 0-4)
+            # Create mask for action logits (ACTION1-ACTION5, ACTION7 = indices 0-5)
             action_mask = torch.full_like(change_action_logits, float("-inf"))
             action6_available = False
 
@@ -639,6 +651,8 @@ class Insula(Agent):
                     action_mask[action_id - 1] = 0.0  # Unmask valid actions
                 elif action_id == 6:  # ACTION6
                     action6_available = True
+                elif action_id == 7:  # ACTION7
+                    action_mask[5] = 0.0  # Unmask ACTION7 at index 5
 
             # Apply mask to change head (always present)
             change_action_logits = change_action_logits + action_mask
@@ -670,11 +684,11 @@ class Insula(Agent):
         change_coord_probs_scaled = change_coord_probs / self.num_coordinates
 
         # Combine action and coordinate probabilities for change head
-        change_probs_sampling = torch.cat([change_action_probs, change_coord_probs_scaled])  # [4101]
+        change_probs_sampling = torch.cat([change_action_probs, change_coord_probs_scaled])  # [4102]
         change_probs_sampling = change_probs_sampling / change_probs_sampling.sum()
 
         # Start with change head probabilities (always present)
-        probs_sampling = change_probs_sampling  # [4101]
+        probs_sampling = change_probs_sampling  # [4102]
 
         # Multiply by completion head probabilities if available
         if completion_action_logits is not None:
@@ -682,27 +696,26 @@ class Insula(Agent):
             completion_coord_probs = torch.sigmoid(completion_coord_logits)  # [4096]
             completion_coord_probs_scaled = completion_coord_probs / self.num_coordinates
 
-            completion_probs_sampling = torch.cat([completion_action_probs, completion_coord_probs_scaled])  # [4101]
+            completion_probs_sampling = torch.cat([completion_action_probs, completion_coord_probs_scaled])  # [4102]
             completion_probs_sampling = completion_probs_sampling / completion_probs_sampling.sum()
 
             # Multiplicative combination
-            probs_sampling = probs_sampling * completion_probs_sampling  # [4101]
+            probs_sampling = probs_sampling * completion_probs_sampling  # [4102]
 
-        # Multiply by inverted gameover head probabilities if available
+        # Multiply by gameover head probabilities if available
         if gameover_action_logits is not None:
             gameover_action_probs = torch.sigmoid(gameover_action_logits)  # [5]
             gameover_coord_probs = torch.sigmoid(gameover_coord_logits)  # [4096]
             gameover_coord_probs_scaled = gameover_coord_probs / self.num_coordinates
 
-            gameover_probs_sampling = torch.cat([gameover_action_probs, gameover_coord_probs_scaled])  # [4101]
+            gameover_probs_sampling = torch.cat([gameover_action_probs, gameover_coord_probs_scaled])  # [4102]
             gameover_probs_sampling = gameover_probs_sampling / gameover_probs_sampling.sum()
 
-            # CRITICAL: Invert gameover probabilities for avoidance (1.0 - p)
-            # gameover_probs predicts "will cause GAME_OVER", we want to AVOID those actions
-            gameover_probs_sampling_inverted = 1.0 - gameover_probs_sampling  # [4101]
-
-            # Multiplicative combination
-            probs_sampling = probs_sampling * gameover_probs_sampling_inverted  # [4101]
+            # IMPORTANT: Use gameover probabilities directly (NO inversion)
+            # Reward semantics: gameover_reward=1.0 means SURVIVED (good), 0.0 means DIED (bad)
+            # Model predicts survival probability, so higher probs = safer actions we WANT
+            # Multiplicative combination: prefer actions with high survival probability
+            probs_sampling = probs_sampling * gameover_probs_sampling  # [4102]
 
         # Renormalize after multiplication (to ensure sum=1.0 for torch.multinomial)
         probs_sampling = probs_sampling / probs_sampling.sum()
@@ -710,15 +723,15 @@ class Insula(Agent):
         # Sample from normalized space (stay on GPU for efficiency)
         selected_idx = torch.multinomial(probs_sampling, num_samples=1).item()
 
-        if selected_idx < 5:
-            # Selected one of ACTION1-ACTION5
+        if selected_idx < 6:  # Changed: 5 → 6
+            # Selected one of ACTION1-ACTION5 or ACTION7
             return selected_idx, None, None
         else:
-            # Selected a coordinate (index 5-4100)
-            coord_idx = selected_idx - 5
+            # Selected a coordinate (index 6-4101)
+            coord_idx = selected_idx - 6  # Changed: 5 → 6 (coordinate offset)
             y_idx = coord_idx // self.grid_size
             x_idx = coord_idx % self.grid_size
-            return 5, (y_idx, x_idx), coord_idx
+            return 6, (y_idx, x_idx), coord_idx  # Changed: 5 → 6
 
     def _random_valid_action(self, available_actions):
         """Generate random valid action for cold start or error fallback."""
@@ -728,7 +741,7 @@ class Insula(Agent):
             return selected_action
         else:
             # Default fallback
-            action = random.choice(self.action_list[:5])  # Random ACTION1-5
+            action = random.choice(self.action_list[:6])  # Random ACTION1-5, ACTION7
             action.reasoning = "Random action (no constraints available)"
             return action
 
