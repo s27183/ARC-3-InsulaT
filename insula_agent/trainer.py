@@ -97,6 +97,66 @@ def extract_sequence(
     }
 
 
+def apply_trajectory_rewards(
+    sequence: dict[str, torch.Tensor],
+    config: InsulaConfig,
+) -> dict[str, torch.Tensor]:
+    """Apply trajectory-level reward revaluation during replay (Memory Reconsolidation).
+
+    This implements the biological mechanism of dopaminergic modulation during
+    hippocampal replay (Gomperts et al., 2015). Experience buffer stores action-level
+    rewards, but during replay we assign trajectory-level rewards to learn which
+    action sequences lead to success/failure.
+
+    IMPORTANT: This does NOT modify the experience buffer - only the replayed sequence!
+
+    Args:
+        sequence: Sequence dictionary from extract_sequence()
+        config: InsulaConfig with use_trajectory_rewards flag
+
+    Returns:
+        Modified sequence dictionary with trajectory-level rewards:
+            - "all_completion_rewards": Set to 1.0 for actions where change_reward==1.0 (if completion)
+            - "all_gameover_rewards": Set to 0.0 for actions where change_reward==1.0 (if gameover)
+            - "all_change_rewards": UNCHANGED (action-level rewards, immediate causality)
+
+    Rationale:
+        - Only productive actions (those that changed the grid) receive trajectory credit/blame
+        - Invalid/no-op actions (change_reward==0.0) remain at action-level rewards
+        - Completion: If sequence ends in success, credit productive actions
+        - Gameover: If sequence ends in failure, penalize productive actions
+        - Change: Grid changes have immediate causality (action-level rewards valid)
+    """
+    if not config.use_trajectory_rewards:
+        return sequence  # Return unchanged if disabled
+
+    # Create a copy to avoid modifying original tensors
+    sequence = sequence.copy()
+
+    # Get final rewards (scalar tensors)
+    final_completion = sequence["completion_reward"].item()  # 1.0 (completion) or 0.0 (no completion)
+    final_gameover = sequence["gameover_reward"].item()      # 1.0 (alive) or 0.0 (dead)
+
+    # Trajectory-level reward assignment for COMPLETION
+    # If final action led to level completion, credit actions that changed the grid
+    # Rationale: Only productive actions (change_reward=1.0) should receive credit
+    if final_completion == 1.0:
+        mask = sequence["all_change_rewards"] == 1.0  # [k+1] boolean mask
+        sequence["all_completion_rewards"][mask] = 1.0
+
+    # Trajectory-level reward assignment for GAMEOVER
+    # If final action led to GAME_OVER (death), penalize actions that changed the grid
+    # Rationale: Only productive actions contributed to failure (invalid actions are irrelevant)
+    if final_gameover == 0.0:
+        mask = sequence["all_change_rewards"] == 1.0  # [k+1] boolean mask
+        sequence["all_gameover_rewards"][mask] = 0.0
+
+    # Change rewards stay UNCHANGED - action-level causality (immediate)
+    # sequence["all_change_rewards"] is NOT modified
+
+    return sequence
+
+
 def group_sequences_by_length(
     sequences: list[dict[str, torch.Tensor]]
 ) -> dict[int, list[dict[str, torch.Tensor]]]:
@@ -147,6 +207,8 @@ def create_change_sequences(
         max_start_idx = buffer_len - context_len - 1
         start_idx = random.randint(0, max_start_idx)
         sequence = extract_sequence(experience_buffer, start_idx, context_len)
+        # Apply trajectory reward revaluation (memory reconsolidation)
+        sequence = apply_trajectory_rewards(sequence, config)
         sequences.append(sequence)
 
     return sequences
@@ -202,6 +264,8 @@ def create_completion_sequences(
         # Extract sequence ENDING at completion_idx
         start_idx = completion_idx - actual_context_len
         sequence = extract_sequence(experience_buffer, start_idx, actual_context_len)
+        # Apply trajectory reward revaluation (memory reconsolidation)
+        sequence = apply_trajectory_rewards(sequence, config)
         sequences.append(sequence)
 
     return sequences
@@ -257,6 +321,8 @@ def create_gameover_sequences(
         # Extract sequence ENDING at gameover_idx
         start_idx = gameover_idx - actual_context_len
         sequence = extract_sequence(experience_buffer, start_idx, actual_context_len)
+        # Apply trajectory reward revaluation (memory reconsolidation)
+        sequence = apply_trajectory_rewards(sequence, config)
         sequences.append(sequence)
 
     return sequences
@@ -277,7 +343,7 @@ def compute_head_loss(
     This function includes diversity regularization to encourage exploration.
 
     Args:
-        head_logits: [batch, 4101] - Predicted logits for this head
+        head_logits: [batch, 4102] - Predicted logits for this head
         target_actions: [batch] - Final action indices (scalar per sequence)
         rewards: [batch] - Final rewards for this head (1.0 or 0.0)
         config: Configuration dictionary with:
@@ -296,11 +362,11 @@ def compute_head_loss(
     bce_loss = F.binary_cross_entropy_with_logits(selected_logits, rewards)
 
     # Add action diversity regularization (encourage exploring more actions)
-    probs = torch.sigmoid(head_logits)  # [batch, 4101]
+    probs = torch.sigmoid(head_logits)  # [batch, 4102]
 
     # Split into action and coordinate spaces
-    action_probs = probs[:, :5]      # [batch, 5]
-    coord_probs = probs[:, 5:]       # [batch, 4096]
+    action_probs = probs[:, :6]      # [batch, 6]
+    coord_probs = probs[:, 6:]       # [batch, 4096]
 
     # Calculate diversity bonus (mean probability)
     # Higher mean = model considers more actions viable = more diversity
@@ -334,7 +400,7 @@ def compute_head_loss_with_temporal_credit(
     Includes diversity regularization to encourage exploration.
 
     Args:
-        logits: [batch, seq_len+1, 4101] - Predicted logits at each state (training mode)
+        logits: [batch, seq_len+1, 4102] - Predicted logits at each state (training mode)
         all_action_indices: [batch, seq_len+1] - ALL actions in sequence
         all_rewards: [batch, seq_len+1] - Rewards for this head (1.0 or 0.0)
         temporal_decay: Head-specific decay rate (0.7, 0.8, or 0.9)
@@ -355,7 +421,7 @@ def compute_head_loss_with_temporal_credit(
     # Loop through sequence - extract logits for each timestep
     for t in range(seq_len):
         # Extract logits for timestep t (state t's prediction)
-        logits_t = logits[:, t, :]  # [batch, 4101]
+        logits_t = logits[:, t, :]  # [batch, 4102]
 
         # Compute temporal weight (exponential decay from end, hippocampal replay)
         steps_from_end = seq_len - 1 - t
@@ -387,12 +453,12 @@ def compute_head_loss_with_temporal_credit(
     bce_loss = total_loss / total_weight
 
     # Add action diversity regularization (use final timestep logits)
-    final_logits = logits[:, -1, :]  # [batch, 4101]
+    final_logits = logits[:, -1, :]  # [batch, 4102]
     probs = torch.sigmoid(final_logits)
 
     # Split into action and coordinate spaces
-    action_probs = probs[:, :5]      # [batch, 5]
-    coord_probs = probs[:, 5:]       # [batch, 4096]
+    action_probs = probs[:, :6]      # [batch, 6]
+    coord_probs = probs[:, 6:]       # [batch, 4096]
 
     # Calculate diversity bonus (mean probability)
     # Higher mean = model considers more actions viable = more diversity
@@ -466,7 +532,7 @@ def train_head_batch(
     logits_dict = model(states_batch, actions_batch, temporal_credit=temporal_update)
 
     # Extract logits for this head
-    # Shape depends on temporal_update: [B, seq_len+1, 4101] if True, [B, 4101] if False
+    # Shape depends on temporal_update: [B, seq_len+1, 4102] if True, [B, 4102] if False
     head_logits = logits_dict[f"{head_type}_logits"]
 
     # Compute loss based on temporal_update config
