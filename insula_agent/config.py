@@ -30,12 +30,25 @@ class InsulaConfig:
     embed_dim: int = 256  # Transformer embedding dimension
     num_layers: int = 4  # Number of transformer layers
     num_heads: int = 8  # Number of attention heads
-    max_context_len: int = 100  # Maximum positional embedding capacity
 
-    # Hierarchical Context Windows (Head-Specific)
-    change_context_len: int = 10  # Immediate effects
-    completion_context_len: int = 50  # Goal sequences
-    gameover_context_len: int = 100  # Failure chains
+    # Unified Context Length (All Heads)
+    # Number of past actions (k) for sequence construction
+    # Creates sequences: k+1 states + k actions = (2k+1) total elements
+    # With context_len=25: 26 states + 25 actions = 51 elements
+    # Sequence structure: [s₀, a₀, s₁, a₁, ..., s₂₄, a₂₄, s₂₅]
+    # Positional embeddings sized accordingly: (2*25 + 1) = 51 positions
+    #
+    # Temporal hierarchy achieved through head-specific decay rates (γ):
+    # - Change head (γ=1.0): Equal weighting → immediate causality
+    # - Completion head (γ=0.8): Recency bias → goal patterns
+    # - Gameover head (γ=0.9): Mild recency → cascading failures
+    #
+    # Rationale for 25:
+    # - Matches human working memory + recent episodic recall (~10-25 items)
+    # - Supports emergence hypothesis (long-term from short-term composition)
+    # - Hippocampal replay timescales (recent experiences, not distant past)
+    # - Efficient computation with sufficient pattern recognition capacity
+    context_len: int = 20
 
     # ViT State Encoder (Spatial Processing)
     vit_patch_size: int = 8  # Default Patch size (8×8 = 64 patches for 64×64 grid) - will be replaced by dynamic patch size per game
@@ -66,7 +79,6 @@ class InsulaConfig:
     # Training Schedule
     train_frequency: int = 5  # Train every N actions
     epochs_per_training: int = 1  # Number of epochs per training session
-    min_buffer_size: int = 5  # Minimum experience buffer size to start training
 
     # ============================================================================
     # MULTI-TIMESTEP FORWARD PREDICTION
@@ -119,13 +131,9 @@ class InsulaConfig:
     use_trajectory_rewards: bool = True  # Enable reward revaluation during replay
 
     # Head-Specific Replay Sizes (Importance-Weighted Sampling)
-    change_replay_size: int = 16  # Change is frequent → small batch
-    completion_replay_size: int = 160  # Completion is rare → large batch
-    gameover_replay_size: int = 16  # GAME_OVER persists → small batch
-
-    # Sequence Length Variation
-    replay_variation_min: float = 0.5  # Minimum variation factor
-    replay_variation_max: float = 1.0  # Maximum variation factor
+    change_replay_size: int = 2  # Change is frequent → small batch
+    completion_replay_size: int = 10  # Completion is rare → large batch
+    gameover_replay_size: int = 2  # GAME_OVER persists → small batch
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -133,10 +141,11 @@ class InsulaConfig:
 
     def validate(self) -> None:
         """Validate configuration parameters."""
-        # Validate ranges
-        if self.max_context_len < 1:
-            raise ValueError("max_context_len must be >= 1")
+        # Validate context length
+        if self.context_len < 5:
+            raise ValueError("context_len must be >= 5")
 
+        # Validate embed_dim divisible by num_heads
         if self.embed_dim % self.num_heads != 0:
             raise ValueError("embed_dim must be divisible by num_heads")
 
@@ -147,38 +156,6 @@ class InsulaConfig:
         # At least one head must be enabled
         if not (self.use_change_head or self.use_completion_head or self.use_gameover_head):
             raise ValueError("At least one prediction head must be enabled")
-
-        # Validate hierarchical context lengths
-        if self.change_context_len > self.max_context_len:
-            raise ValueError(
-                f"change_context_len ({self.change_context_len}) exceeds "
-                f"max_context_len ({self.max_context_len})"
-            )
-
-        if self.use_completion_head and self.completion_context_len > self.max_context_len:
-            raise ValueError(
-                f"completion_context_len ({self.completion_context_len}) exceeds "
-                f"max_context_len ({self.max_context_len})"
-            )
-
-        if self.use_gameover_head and self.gameover_context_len > self.max_context_len:
-            raise ValueError(
-                f"gameover_context_len ({self.gameover_context_len}) exceeds "
-                f"max_context_len ({self.max_context_len})"
-            )
-
-        # Validate hierarchical ordering: change < completion < gameover
-        if self.use_completion_head and self.change_context_len >= self.completion_context_len:
-            raise ValueError(
-                f"change_context_len ({self.change_context_len}) must be < "
-                f"completion_context_len ({self.completion_context_len}) for hierarchical contexts"
-            )
-
-        if self.use_gameover_head and self.change_context_len >= self.gameover_context_len:
-            raise ValueError(
-                f"change_context_len ({self.change_context_len}) must be < "
-                f"gameover_context_len ({self.gameover_context_len}) for hierarchical contexts"
-            )
 
         # Validate temporal decay rates (0, 1]
         if not (0 < self.change_temporal_update_decay <= 1.0):
@@ -196,29 +173,12 @@ class InsulaConfig:
                 f"gameover_temporal_decay ({self.gameover_temporal_update_decay}) must be in (0, 1]"
             )
 
-        # Validate replay variation rates [0.5, 1.0]
-        if not (0.5 <= self.replay_variation_min <= 1.0):
-            raise ValueError(
-                f"replay_variation_min ({self.replay_variation_min}) must be in [0.5, 1.0]"
-            )
-
-        if not (0.5 <= self.replay_variation_max <= 1.0):
-            raise ValueError(
-                f"replay_variation_max ({self.replay_variation_max}) must be in [0.5, 1.0]"
-            )
-
-        if self.replay_variation_min > self.replay_variation_max:
-            raise ValueError(
-                f"replay_variation_min ({self.replay_variation_min}) must be <= "
-                f"replay_variation_max ({self.replay_variation_max})"
-            )
-
     def summary(self) -> str:
         """Get a summary of the configuration for logging."""
         return (
             f"InsulaConfig: lr={self.learning_rate}, "
             f"epochs={self.epochs_per_training}, "
-            f"context={self.max_context_len}"
+            f"context={self.context_len}"
         )
 
 
@@ -246,11 +206,7 @@ def cpu_config() -> InsulaConfig:
         embed_dim=128,
         num_layers=2,
         num_heads=4,  # 128/4 = 32
-        max_context_len=40,  # Same for CPU/GPU (positional embedding capacity)
-        # Smaller hierarchical context windows (max still ≤ 40)
-        change_context_len=5,
-        completion_context_len=10,  # 20 → 10 for faster CPU training
-        gameover_context_len=20,    # 40 → 20 for faster CPU training
+        context_len=15,  # Smaller context for faster CPU training
         # Smaller ViT for CPU
         vit_num_layers=2,
         vit_num_heads=4,
@@ -273,11 +229,7 @@ def gpu_config() -> InsulaConfig:
         embed_dim=256,
         num_layers=4,
         num_heads=8,
-        max_context_len=100,  # Same for CPU/GPU (positional embedding capacity)
-        # Hierarchical context windows
-        change_context_len=10,
-        completion_context_len=50,
-        gameover_context_len=100,  # = max_context_len
+        context_len=25,  # Unified context length for all heads
         # ViT architecture
         vit_num_layers=4,
         vit_num_heads=8,
@@ -329,7 +281,7 @@ def _apply_environment_overrides(config: InsulaConfig) -> InsulaConfig:
     """
     env_mapping = {
         "PURE_DT_LEARNING_RATE": ("learning_rate", float),
-        "PURE_DT_MAX_CONTEXT_LEN": ("max_context_len", int),
+        "PURE_DT_CONTEXT_LEN": ("context_len", int),
         "PURE_DT_EMBED_DIM": ("embed_dim", int),
         "PURE_DT_NUM_LAYERS": ("num_layers", int),
         "PURE_DT_EPOCHS": ("epochs_per_training", int),
