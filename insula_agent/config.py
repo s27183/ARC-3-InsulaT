@@ -120,7 +120,7 @@ class InsulaConfig:
     # ============================================================================
 
     # Buffer Management
-    max_buffer_size: int = 100_000  # Maximum experience buffer size
+    max_buffer_size: int = 200_000  # Maximum experience buffer size
 
     # Trajectory Reward Assignment (Memory Reconsolidation)
     # When enabled: Assign trajectory-level rewards during replay, not in buffer
@@ -131,9 +131,9 @@ class InsulaConfig:
     use_trajectory_rewards: bool = True  # Enable reward revaluation during replay
 
     # Head-Specific Replay Sizes (Importance-Weighted Sampling)
-    change_replay_size: int = 16  # Change is frequent → small batch
-    completion_replay_size: int = 32  # Completion is rare → large batch
-    gameover_replay_size: int = 16  # GAME_OVER persists → small batch
+    change_replay_size: int = 8  # Change is frequent → small batch
+    completion_replay_size: int = 8  # Completion is rare → large batch
+    gameover_replay_size: int = 8  # GAME_OVER persists → small batch
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -212,9 +212,9 @@ def cpu_config() -> InsulaConfig:
         vit_num_heads=4,
         vit_cell_embed_dim=32,
         # Smaller replay sizes for faster training
-        change_replay_size=16,       # 16 → 8
-        completion_replay_size=32,  # 160 → 80
-        gameover_replay_size=16,     # 16 → 8
+        change_replay_size=4,       # 16 → 8
+        completion_replay_size=4,  # 160 → 80
+        gameover_replay_size=4,     # 16 → 8
     )
 
 
@@ -235,9 +235,9 @@ def gpu_config() -> InsulaConfig:
         vit_num_heads=8,
         vit_cell_embed_dim=64,
         # Replay sizes (importance-weighted sampling)
-        change_replay_size=32,
-        completion_replay_size=64,
-        gameover_replay_size=32,
+        change_replay_size=8,
+        completion_replay_size=8,
+        gameover_replay_size=8,
     )
 
 
