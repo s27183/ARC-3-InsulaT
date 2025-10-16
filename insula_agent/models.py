@@ -373,7 +373,7 @@ class DecisionModel(nn.Module):
         embed_dim=256,
         num_layers=4,
         num_heads=8,
-        max_context_len=20,
+        context_len=25,  # Number of past actions (k) - unified for all heads
         # ViT encoder parameters
         vit_cell_embed_dim=64,
         vit_patch_size=8,
@@ -429,9 +429,10 @@ class DecisionModel(nn.Module):
 
         # Positional encoding for temporal context
         # Sequence: state0, action0, state1, action1, ..., state_k (final state)
-        # Total positions: max_context_len * 2 + 1
+        # Total positions: context_len * 2 + 1
+        # With context_len=25: (2*25 + 1) = 51 positions
         self.pos_embedding = nn.Parameter(
-            torch.randn(max_context_len * 2 + 1, embed_dim) * 0.02
+            torch.randn(context_len * 2 + 1, embed_dim) * 0.02
         )
 
         # Decoder-only transformer
