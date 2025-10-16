@@ -21,9 +21,9 @@ Components:
 
 Key Features:
 - Online supervised learning: Labels from game API outcomes (change/completion/gameover)
-- Hierarchical context windows: 15/100/300 steps for change/completion/gameover heads
-- Head-specific temporal decay: 0.7/0.8/0.9 for multi-timescale replay weighting
-- Importance-weighted replay: 1:5:10 ratio (critical events replayed more)
+- Unified context window: 25 steps for all heads (temporal hierarchy via decay rates, not length)
+- Head-specific temporal decay: 1.0/0.8/0.9 for multi-timescale replay weighting
+- Importance-weighted replay: 1:10:1 ratio (critical events replayed more)
 - Temporal hindsight traces: Individual action evaluation after seeing full trajectory
 - Joint optimization: Single optimizer step on accumulated gradients from all heads
 
@@ -247,7 +247,7 @@ class Insula(Agent):
             embed_dim=self.config.embed_dim,
             num_layers=self.config.num_layers,
             num_heads=self.config.num_heads,
-            max_context_len=self.config.max_context_len,
+            context_len=self.config.context_len,  # Unified context length for all heads
             # ViT encoder parameters with dynamic patch size
             vit_cell_embed_dim=self.config.vit_cell_embed_dim,
             vit_patch_size=patch_size,  # 🔥 Dynamic based on grid size!
@@ -332,7 +332,7 @@ class Insula(Agent):
         # Train the model
         if self._should_train_model(latest_frame):
             buffer_size = len(self.experience_buffer)
-            if buffer_size >= self.config.min_buffer_size:
+            if buffer_size >= self.config.context_len:
                 self.logger.info(
                     f"🤖 Training Insula model. Game: {self.game_id} with (buffer size: {buffer_size})"
                 )
@@ -349,7 +349,7 @@ class Insula(Agent):
                 )
             else:
                 self.logger.debug(
-                    f"Skipping training: buffer size {buffer_size} < min_buffer_size {self.config.min_buffer_size}"
+                    f"Skipping training: buffer size {buffer_size} < context length {self.config.context_len}"
                 )
 
         # Check level completion
@@ -507,16 +507,9 @@ class Insula(Agent):
 
         self.decision_model.eval()
         with torch.no_grad():
-            # Dynamic inference context length based on enabled heads
-            # Rationale: Each head needs ≥ its training context length for correct predictions
-            # Use longest context among enabled heads (attention handles longer context gracefully)
-            inference_context_len = self.config.change_context_len  # Start with change (always enabled)
-
-            if self.config.use_completion_head:
-                inference_context_len = max(inference_context_len, self.config.completion_context_len)
-
-            if self.config.use_gameover_head:
-                inference_context_len = max(inference_context_len, self.config.gameover_context_len)
+            # Unified inference context length for all heads
+            # All heads use same context_len, temporal hierarchy via decay rates
+            inference_context_len = self.config.context_len
 
             # Log inference context (debug level, only once on first inference)
             if self.action_counter == 1:
@@ -527,7 +520,7 @@ class Insula(Agent):
                     enabled_heads.append("gameover")
                 self.logger.debug(
                     f"Inference context length: {inference_context_len} steps "
-                    f"(enabled heads: {', '.join(enabled_heads)})"
+                    f"(unified for all heads: {', '.join(enabled_heads)})"
                 )
 
             # Cold start - random valid action if no experience
@@ -750,12 +743,10 @@ class Insula(Agent):
 
         Args:
             current_frame: Current frame tensor [64, 64]
-            context_len: Number of past experiences to include. This is dynamically
-                        selected based on enabled heads - each head requires at least
-                        its training context length for correct predictions:
-                        - Change-only: 5 steps (8× faster than fixed 40)
-                        - Change+Completion: 20 steps (2× faster than fixed 40)
-                        - All heads: 40 steps (same as fixed, but semantically correct)
+            context_len: Number of past experiences to include (unified for all heads).
+                        With unified context architecture, all heads use same context_len=25.
+                        Temporal hierarchy achieved via head-specific decay rates (γ=1.0, 0.8, 0.9),
+                        not sequence length.
 
         Returns:
             states: [1, seq_len+1, 64, 64] - State sequence including current
