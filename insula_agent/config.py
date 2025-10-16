@@ -48,7 +48,7 @@ class InsulaConfig:
     # - Supports emergence hypothesis (long-term from short-term composition)
     # - Hippocampal replay timescales (recent experiences, not distant past)
     # - Efficient computation with sufficient pattern recognition capacity
-    context_len: int = 20
+    context_len: int = 5
 
     # ViT State Encoder (Spatial Processing)
     vit_patch_size: int = 8  # Default Patch size (8×8 = 64 patches for 64×64 grid) - will be replaced by dynamic patch size per game
@@ -63,8 +63,8 @@ class InsulaConfig:
     # Multi-Head Prediction Architecture
     # TODO: enable/disable learned heads for ablation studies
     use_change_head: bool = True  # Always True (change head is required)
-    use_completion_head: bool = False  # Predict level completion (trajectory-level rewards)
-    use_gameover_head: bool = False  # Predict GAME_OVER avoidance (trajectory-level rewards)
+    use_completion_head: bool = True  # Predict level completion (trajectory-level rewards)
+    use_gameover_head: bool = True  # Predict GAME_OVER avoidance (trajectory-level rewards)
 
     # ============================================================================
     # TRAINING CONFIGURATION
@@ -112,15 +112,15 @@ class InsulaConfig:
     # trajectory-level rewards (matches hippocampal replay + dopamine modulation)
     use_learned_decay: bool = False  # Learn decay rates during training (experimental)
     change_temporal_update_decay: float = 1.0  # Action-level rewards → no decay needed, should keep at 1.0
-    completion_temporal_update_decay: float = 0.8  # Trajectory rewards → moderate recency bias, should be less than 1
-    gameover_temporal_update_decay: float = 0.9  # Trajectory rewards → mild recency bias, should be less than 1
+    completion_temporal_update_decay: float = 1.0  # Trajectory rewards → moderate recency bias, should be less than 1
+    gameover_temporal_update_decay: float = 1.0  # Trajectory rewards → mild recency bias, should be less than 1
 
     # ============================================================================
     # EXPERIENCE REPLAY
     # ============================================================================
 
     # Buffer Management
-    max_buffer_size: int = 200000  # Maximum experience buffer size
+    max_buffer_size: int = 100_000  # Maximum experience buffer size
 
     # Trajectory Reward Assignment (Memory Reconsolidation)
     # When enabled: Assign trajectory-level rewards during replay, not in buffer
@@ -131,9 +131,9 @@ class InsulaConfig:
     use_trajectory_rewards: bool = True  # Enable reward revaluation during replay
 
     # Head-Specific Replay Sizes (Importance-Weighted Sampling)
-    change_replay_size: int = 2  # Change is frequent → small batch
-    completion_replay_size: int = 10  # Completion is rare → large batch
-    gameover_replay_size: int = 2  # GAME_OVER persists → small batch
+    change_replay_size: int = 16  # Change is frequent → small batch
+    completion_replay_size: int = 32  # Completion is rare → large batch
+    gameover_replay_size: int = 16  # GAME_OVER persists → small batch
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -206,15 +206,15 @@ def cpu_config() -> InsulaConfig:
         embed_dim=128,
         num_layers=2,
         num_heads=4,  # 128/4 = 32
-        context_len=15,  # Smaller context for faster CPU training
+        context_len=5,  # Smaller context for faster CPU training
         # Smaller ViT for CPU
         vit_num_layers=2,
         vit_num_heads=4,
         vit_cell_embed_dim=32,
         # Smaller replay sizes for faster training
-        change_replay_size=8,       # 16 → 8
-        completion_replay_size=80,  # 160 → 80
-        gameover_replay_size=8,     # 16 → 8
+        change_replay_size=16,       # 16 → 8
+        completion_replay_size=32,  # 160 → 80
+        gameover_replay_size=16,     # 16 → 8
     )
 
 
@@ -229,15 +229,15 @@ def gpu_config() -> InsulaConfig:
         embed_dim=256,
         num_layers=4,
         num_heads=8,
-        context_len=25,  # Unified context length for all heads
+        context_len=5,  # Unified context length for all heads
         # ViT architecture
         vit_num_layers=4,
         vit_num_heads=8,
         vit_cell_embed_dim=64,
         # Replay sizes (importance-weighted sampling)
-        change_replay_size=16,
-        completion_replay_size=160,
-        gameover_replay_size=16,
+        change_replay_size=32,
+        completion_replay_size=64,
+        gameover_replay_size=32,
     )
 
 
