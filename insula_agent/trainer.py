@@ -2,10 +2,17 @@
 InsulaAgent Training Module
 
 This module contains all training-related functions for InsulaAgent,
-including hierarchical context windows, temporal hindsight traces,
+including unified context length, temporal hindsight traces,
 and importance-weighted replay.
 
 Uses online supervised learning with self-generated labels from game outcomes.
+
+Key features:
+- Unified context length (25 steps for all heads)
+- Temporal hierarchy via head-specific decay rates (γ=1.0, 0.8, 0.9), not sequence length
+- Outcome-anchored sampling for completion/gameover heads
+- Trajectory-level reward revaluation (memory reconsolidation)
+- Direct batching (all sequences same length → no grouping needed)
 """
 
 from typing import Any
@@ -157,56 +164,57 @@ def apply_trajectory_rewards(
     return sequence
 
 
-def group_sequences_by_length(
-    sequences: list[dict[str, torch.Tensor]]
-) -> dict[int, list[dict[str, torch.Tensor]]]:
-    """Group sequences by their actual length for efficient batching.
-
-    Args:
-        sequences: List of sequence dictionaries (variable lengths)
-
-    Returns:
-        Dictionary mapping length → list of sequences with that length
-        Example: {80: [seq1, seq2, ...], 95: [seq3, seq4, ...], 100: [...]}
-    """
-    grouped = defaultdict(list)
-    for seq in sequences:
-        seq_len = len(seq["actions"])  # Number of past actions
-        grouped[seq_len].append(seq)
-
-    return dict(grouped)
-
-
 def create_change_sequences(
     experience_buffer: deque,
     config: InsulaConfig,
 ) -> list[dict[str, torch.Tensor]]:
-    """Create change sequences: random sampling, fixed length, no variation.
+    """Create change sequences: random sampling without replacement (when possible).
+
+    Samples WITHOUT replacement within batch to maximize diversity and reduce
+    gradient correlation. Falls back to WITH replacement if buffer is small.
 
     Args:
         experience_buffer: Deque of experience dictionaries
         config: Configuration dictionary with:
             - "change_replay_size": int (default 16)
-            - "change_context_len": int (default 15)
+            - "context_len": int (default 25, unified for all heads)
 
     Returns:
-        List of sequence dictionaries, all with same length (change_context_len).
+        List of sequence dictionaries, all with length context_len.
         Returns empty list if buffer too small.
     """
     replay_size = config.change_replay_size
-    context_len = config.change_context_len
+    context_len = config.context_len  # Unified context length
     buffer_len = len(experience_buffer)
 
     # Need at least context_len + 1 experiences (k past actions + 1 current state)
     if buffer_len < context_len + 1:
         return []
 
+    # Calculate possible start positions
+    max_start_idx = buffer_len - context_len - 1
+    num_possible_starts = max_start_idx + 1
+
+    # Sample start indices using NumPy for clarity and consistency
+    if num_possible_starts >= replay_size:
+        # Sufficient diversity → sample WITHOUT replacement (no duplicates)
+        sampled_starts = np.random.choice(
+            num_possible_starts,
+            size=replay_size,
+            replace=False  # Ensure unique sequences within batch
+        )
+    else:
+        # Limited diversity → sample WITH replacement (allow duplicates)
+        # This happens early in the game when buffer is small
+        sampled_starts = np.random.choice(
+            num_possible_starts,
+            size=replay_size,
+            replace=True
+        )
+
     sequences = []
-    # Random sampling
-    for _ in range(replay_size):
-        max_start_idx = buffer_len - context_len - 1
-        start_idx = random.randint(0, max_start_idx)
-        sequence = extract_sequence(experience_buffer, start_idx, context_len)
+    for start_idx in sampled_starts:
+        sequence = extract_sequence(experience_buffer, int(start_idx), context_len)
         # Apply trajectory reward revaluation (memory reconsolidation)
         sequence = apply_trajectory_rewards(sequence, config)
         sequences.append(sequence)
@@ -218,24 +226,20 @@ def create_completion_sequences(
     experience_buffer: deque,
     config: InsulaConfig,
 ) -> list[dict[str, torch.Tensor]]:
-    """Create completion sequences: outcome-anchored, variable length, multiple batches.
+    """Create completion sequences: outcome-anchored, unified context length.
 
     Args:
         experience_buffer: Deque of experience dictionaries
         config: Configuration dictionary with:
-            - "completion_replay_size": int (default 80)
-            - "completion_context_len": int (default 100)
-            - "replay_variation_min": float (default 0.8)
-            - "replay_variation_max": float (default 1.0)
+            - "completion_replay_size": int (default 160)
+            - "context_len": int (default 25, unified for all heads)
 
     Returns:
-        List of sequence dictionaries with variable lengths (80%-100% of completion_context_len).
+        List of sequence dictionaries with length context_len.
         Returns empty list if no completion events found.
     """
     replay_size = config.completion_replay_size
-    target_context_len = config.completion_context_len
-    variation_min = config.replay_variation_min
-    variation_max = config.replay_variation_max
+    context_len = config.context_len  # Unified context length (no variation)
 
     # Find all completion events in buffer
     completion_idx = [
@@ -256,10 +260,8 @@ def create_completion_sequences(
 
     sequences = []
     for completion_idx in sampled_indices:
-        # Apply variation: random length between 80% and 100% of target
-        variation_factor = random.uniform(variation_min, variation_max)
-        actual_context_len = int(target_context_len * variation_factor)
-        actual_context_len = min(actual_context_len, completion_idx)  # Can't go before buffer start
+        # Use fixed context_len (no variation)
+        actual_context_len = min(context_len, completion_idx)  # Can't go before buffer start
 
         # Extract sequence ENDING at completion_idx
         start_idx = completion_idx - actual_context_len
@@ -275,24 +277,20 @@ def create_gameover_sequences(
     experience_buffer: deque,
     config: InsulaConfig,
 ) -> list[dict[str, torch.Tensor]]:
-    """Create GAME_OVER sequences: outcome-anchored, variable length, multiple batches.
+    """Create GAME_OVER sequences: outcome-anchored, unified context length.
 
     Args:
         experience_buffer: Deque of experience dictionaries
         config: Configuration dictionary with:
-            - "gameover_replay_size": int (default 160)
-            - "gameover_context_len": int (default 160)
-            - "replay_variation_min": float (default 0.8)
-            - "replay_variation_max": float (default 1.0)
+            - "gameover_replay_size": int (default 16)
+            - "context_len": int (default 25, unified for all heads)
 
     Returns:
-        List of sequence dictionaries with variable lengths (80%-100% of gameover_context_len).
+        List of sequence dictionaries with length context_len.
         Returns empty list if no GAME_OVER events found.
     """
     replay_size = config.gameover_replay_size
-    target_context_len = config.gameover_context_len
-    variation_min = config.replay_variation_min
-    variation_max = config.replay_variation_max
+    context_len = config.context_len  # Unified context length (no variation)
 
     # Find all GAME_OVER events in buffer (gameover_reward == 0.0 means GAME_OVER occurred)
     gameover_idx = [
@@ -313,10 +311,8 @@ def create_gameover_sequences(
 
     sequences = []
     for gameover_idx in sampled_indices:
-        # Apply variation: random length between 80% and 100% of target
-        variation_factor = random.uniform(variation_min, variation_max)
-        actual_context_len = int(target_context_len * variation_factor)
-        actual_context_len = min(actual_context_len, gameover_idx)  # Can't go before buffer start
+        # Use fixed context_len (no variation)
+        actual_context_len = min(context_len, gameover_idx)  # Can't go before buffer start
 
         # Extract sequence ENDING at gameover_idx
         start_idx = gameover_idx - actual_context_len
@@ -359,59 +355,70 @@ def compute_head_loss_with_temporal_credit(logits: torch.Tensor, all_action_indi
                                            all_rewards: torch.Tensor, temporal_update_decay: torch.Tensor) -> torch.Tensor:
     """Compute loss for a single head with per-timestep predictions and temporal credit assignment.
 
+    Vectorized implementation for GPU efficiency.
+
     Implements continuous forward modeling: each state's prediction is evaluated against its action.
     This matches hippocampal replay where all moments in a sequence get reactivated and updated.
 
     Each head (change/completion/gameover) has its own temporal decay rate.
 
     Args:
-        logits: [batch, seq_len+1, 4102] - Predicted logits at each state (training mode)
-        all_action_indices: [batch, seq_len+1] - ALL actions in sequence
-        all_rewards: [batch, seq_len+1] - Rewards for this head (1.0 or 0.0)
-        temporal_update_decay: Head-specific decay rate (1.0, 0.8, or 0.9)
+        logits: [batch, seq_len, 4102] - Predicted logits at each state (training mode)
+        all_action_indices: [batch, seq_len] - ALL actions in sequence
+        all_rewards: [batch, seq_len] - Rewards for this head (1.0 or 0.0)
+        temporal_update_decay: Head-specific decay rate (scalar: 1.0, 0.8, or 0.9)
 
     Returns:
         loss: Scalar loss tensor (temporally weighted binary cross-entropy)
+
+    Temporal Weighting:
+        - Weight formula: w_t = γ^(seq_len - 1 - t)
+        - Most recent (t=seq_len-1): γ^0 = 1.0 (full weight)
+        - Oldest (t=0): γ^(seq_len-1) (smallest weight)
+        - Example with γ=0.8, seq_len=26:
+          * t=25 (newest): 0.8^0 = 1.000
+          * t=20: 0.8^5 = 0.328
+          * t=10: 0.8^15 = 0.035
+          * t=0 (oldest): 0.8^25 = 0.004
     """
-    batch_size = logits.shape[0]
-    seq_len = all_action_indices.shape[1]  # seq_len+1 states
+    batch_size, seq_len, _ = logits.shape
 
-    # Accumulate weighted losses
-    total_loss = 0.0
-    total_weight = 0.0
+    # Compute temporal weights for ALL timesteps at once: [seq_len]
+    # torch.arange(seq_len - 1, -1, -1) creates countdown: [seq_len-1, seq_len-2, ..., 1, 0]
+    # This represents "steps from end" for each timestep
+    # Example with seq_len=26: [25, 24, 23, ..., 1, 0]
+    steps_from_end = torch.arange(seq_len - 1, -1, -1, dtype=torch.float32, device=logits.device)  # [seq_len]
+    temporal_weights = temporal_update_decay ** steps_from_end  # [seq_len]
 
-    # Loop through sequence - extract logits for each timestep
-    for t in range(seq_len):
-        # Extract logits for timestep t (state t's prediction)
-        logits_t = logits[:, t, :]  # [batch, 4102]
+    # Select logits for actions taken at each timestep (vectorized gather)
+    # logits: [batch, seq_len, 4102]
+    # all_action_indices: [batch, seq_len]
+    # Need to expand indices to [batch, seq_len, 1] to gather along dim=2
+    selected_logits = logits.gather(
+        dim=2,  # Gather along action dimension
+        index=all_action_indices.unsqueeze(2)  # [batch, seq_len] → [batch, seq_len, 1]
+    ).squeeze(2)  # [batch, seq_len, 1] → [batch, seq_len]
 
-        # Compute temporal weight (exponential decay from end, hippocampal replay)
-        steps_from_end = seq_len - 1 - t
-        time_weight = temporal_update_decay ** steps_from_end
+    # Compute BCE loss for ALL timesteps at once: [batch, seq_len]
+    losses = F.binary_cross_entropy_with_logits(
+        selected_logits,  # [batch, seq_len]
+        all_rewards,      # [batch, seq_len]
+        reduction='none'  # Keep per-example losses
+    )  # [batch, seq_len]
 
-        # Get action at timestep t
-        action_t = all_action_indices[:, t]  # [batch]
+    # Apply temporal weights via broadcasting: [batch, seq_len] * [seq_len]
+    # Broadcasting expands temporal_weights to [1, seq_len], then element-wise multiply
+    weighted_losses = losses * temporal_weights.unsqueeze(0)  # [batch, seq_len]
 
-        # Use gather() to select logits for THIS action
-        selected_logits_t = logits_t.gather(
-            dim=1, index=action_t.unsqueeze(1)
-        ).squeeze(1)  # [batch]
+    # Sum across both batch and time dimensions
+    total_loss = weighted_losses.sum()  # [batch, seq_len] → scalar
 
-        # Get rewards for this action
-        reward_t = all_rewards[:, t]  # [batch]
+    # Total weight = sum of temporal weights across time × batch size
+    # This normalizes by the "effective number of weighted examples"
+    total_weight = temporal_weights.sum() * batch_size  # scalar
 
-        # Compute BCE loss for this action
-        loss_t = F.binary_cross_entropy_with_logits(
-            selected_logits_t,
-            reward_t,
-            reduction='none'
-        )  # [batch]
-
-        # Accumulate with temporal weight
-        total_loss += (loss_t * time_weight).sum()
-        total_weight += time_weight * batch_size
-
-    # Normalize by cumulative weight
+    # Normalize by cumulative weight to get weighted average loss
+    # Makes loss independent of batch size and sequence length
     loss = total_loss / total_weight
 
     return loss
@@ -512,7 +519,10 @@ def train_model(
     game_id: str,
     action_counter: int,
 ) -> None:
-    """Train Insula with hierarchical context windows and gradient accumulation.
+    """Train Insula with unified context length and gradient accumulation.
+
+    Note: Buffer size check performed by caller (insula.py).
+    This function assumes buffer is large enough for sequence creation.
 
     Args:
         model: DecisionTransformer model to train
@@ -528,9 +538,6 @@ def train_model(
     Returns:
         None (modifies model in-place)
     """
-    if len(experience_buffer) < config.min_buffer_size:
-        return None
-
     # === STEP 1: Create head-specific sequences ===
     # Always create change sequences (required)
     change_sequences = create_change_sequences(experience_buffer, config)
@@ -551,21 +558,20 @@ def train_model(
     if not change_sequences and not completion_sequences and not gameover_sequences:
         return None
 
-    # === STEP 2: Group completion/gameover by length for batching ===
-    completion_batches = group_sequences_by_length(completion_sequences) if completion_sequences else {}
-    gameover_batches = group_sequences_by_length(gameover_sequences) if gameover_sequences else {}
-
-    # Change sequences all same length → single batch
-    change_batches = {config.change_context_len: change_sequences} if change_sequences else {}
+    # === STEP 2: Direct batching (all sequences same length) ===
+    # With unified context_len, all sequences have same length → no grouping needed
+    # Simply count how many batches we'll process (1 per head if sequences exist)
+    num_batches = (1 if change_sequences else 0) + \
+                  (1 if completion_sequences else 0) + \
+                  (1 if gameover_sequences else 0)
 
     # Log training info
     total_sequences = len(change_sequences) + len(completion_sequences) + len(gameover_sequences)
-    num_batches = len(change_batches) + len(completion_batches) + len(gameover_batches)
     logger.info(
         f"🎯 Starting Insula training. Game: {game_id}. "
         f"{total_sequences} sequences ({len(change_sequences)} change, "
         f"{len(completion_sequences)} completion, {len(gameover_sequences)} gameover) "
-        f"→ {num_batches} batches"
+        f"→ {num_batches} batches (unified context_len={config.context_len})"
     )
 
     # === STEP 3: Training loop with gradient accumulation ===
@@ -582,31 +588,29 @@ def train_model(
             "num_batches": 0,
         }
 
-        # === STEP 4: Process change head batches ===
-        for length, sequences in change_batches.items():
+        # === STEP 4: Process change head (direct batching) ===
+        if change_sequences:
             loss, metrics = train_head_batch(
-                model, sequences, head_type="change", config=config, device=device
+                model, change_sequences, head_type="change", config=config, device=device
             )
             accumulated_metrics["change_loss"] += metrics["loss"]
             accumulated_metrics["num_batches"] += 1
 
-        # === STEP 5: Process completion head batches (if head enabled) ===
-        if config.use_completion_head:
-            for length, sequences in completion_batches.items():
-                loss, metrics = train_head_batch(
-                    model, sequences, head_type="completion", config=config, device=device
-                )
-                accumulated_metrics["completion_loss"] += metrics["loss"]
-                accumulated_metrics["num_batches"] += 1
+        # === STEP 5: Process completion head (if enabled, direct batching) ===
+        if config.use_completion_head and completion_sequences:
+            loss, metrics = train_head_batch(
+                model, completion_sequences, head_type="completion", config=config, device=device
+            )
+            accumulated_metrics["completion_loss"] += metrics["loss"]
+            accumulated_metrics["num_batches"] += 1
 
-        # === STEP 6: Process gameover head batches (if head enabled) ===
-        if config.use_gameover_head:
-            for length, sequences in gameover_batches.items():
-                loss, metrics = train_head_batch(
-                    model, sequences, head_type="gameover", config=config, device=device
-                )
-                accumulated_metrics["gameover_loss"] += metrics["loss"]
-                accumulated_metrics["num_batches"] += 1
+        # === STEP 6: Process gameover head (if enabled, direct batching) ===
+        if config.use_gameover_head and gameover_sequences:
+            loss, metrics = train_head_batch(
+                model, gameover_sequences, head_type="gameover", config=config, device=device
+            )
+            accumulated_metrics["gameover_loss"] += metrics["loss"]
+            accumulated_metrics["num_batches"] += 1
 
         # === STEP 7: Single optimizer step (accumulated gradients) ===
         if config.gradient_clip_norm > 0:
