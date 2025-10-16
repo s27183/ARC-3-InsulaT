@@ -212,9 +212,9 @@ def cpu_config() -> InsulaConfig:
         vit_num_heads=4,
         vit_cell_embed_dim=32,
         # Smaller replay sizes for faster training
-        change_replay_size=4,       # 16 → 8
-        completion_replay_size=4,  # 160 → 80
-        gameover_replay_size=4,     # 16 → 8
+        change_replay_size=32,       # 16 → 8
+        completion_replay_size=16,  # 160 → 80
+        gameover_replay_size=8,     # 16 → 8
     )
 
 
@@ -234,10 +234,10 @@ def gpu_config() -> InsulaConfig:
         vit_num_layers=4,
         vit_num_heads=8,
         vit_cell_embed_dim=64,
-        # Replay sizes (importance-weighted sampling)
-        change_replay_size=8,
-        completion_replay_size=8,
-        gameover_replay_size=8,
+        # Replay sizes
+        change_replay_size=64,
+        completion_replay_size=32,
+        gameover_replay_size=16,
     )
 
 
