@@ -88,7 +88,7 @@ class InsulaConfig:
     # When True: Model predicts at ALL states in sequence (PAST + PRESENT forward predictions)
     # When False: Model predicts only at final state (PRESENT forward prediction only)
     # Recommendation: True (provides k+1 training signals per sequence, improves representations)
-    temporal_update: bool = True
+    temporal_update: bool = False
 
     # Temporal Weighting (ONLY used when temporal_update=True)
     # Controls relative weighting of predictions at different timesteps in sequence
@@ -226,14 +226,14 @@ def gpu_config() -> InsulaConfig:
     """
     return InsulaConfig(
         # Transformer architecture (current proven default)
-        embed_dim=256,
-        num_layers=4,
-        num_heads=8,
+        embed_dim=128,
+        num_layers=2,
+        num_heads=4,
         context_len=5,  # Unified context length for all heads
         # ViT architecture
-        vit_num_layers=4,
-        vit_num_heads=8,
-        vit_cell_embed_dim=64,
+        vit_num_layers=2,
+        vit_num_heads=4,
+        vit_cell_embed_dim=32,
         # Replay sizes
         change_replay_size=64,
         completion_replay_size=32,
