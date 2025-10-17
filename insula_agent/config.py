@@ -48,7 +48,7 @@ class InsulaConfig:
     # - Supports emergence hypothesis (long-term from short-term composition)
     # - Hippocampal replay timescales (recent experiences, not distant past)
     # - Efficient computation with sufficient pattern recognition capacity
-    context_len: int = 5
+    context_len: int = 1
 
     # ViT State Encoder (Spatial Processing)
     vit_patch_size: int = 8  # Default Patch size (8×8 = 64 patches for 64×64 grid) - will be replaced by dynamic patch size per game
@@ -79,6 +79,8 @@ class InsulaConfig:
     # Training Schedule
     train_frequency: int = 5  # Train every N actions
     epochs_per_training: int = 1  # Number of epochs per training session
+
+    #
 
     # ============================================================================
     # MULTI-TIMESTEP FORWARD PREDICTION
@@ -142,8 +144,8 @@ class InsulaConfig:
     def validate(self) -> None:
         """Validate configuration parameters."""
         # Validate context length
-        if self.context_len < 5:
-            raise ValueError("context_len must be >= 5")
+        if self.context_len < 1:
+            raise ValueError("context_len must be >= 1")
 
         # Validate embed_dim divisible by num_heads
         if self.embed_dim % self.num_heads != 0:
