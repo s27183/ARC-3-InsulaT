@@ -39,6 +39,7 @@ from typing import Any
 import random
 import time
 import logging
+import hashlib
 from collections import deque
 from pathlib import Path
 
@@ -120,6 +121,11 @@ class Insula(Agent):
         self.experience_buffer = deque(maxlen=self.config.max_buffer_size)
         self.train_frequency = self.config.train_frequency
 
+        # Hash set for deduplication (only used when context_len==1)
+        # Stores Blake2b hashes of (state, action) pairs to prevent duplicates
+        # Cleared on level completion (same lifecycle as experience_buffer)
+        self.experience_hash_set = set()
+
         # Game state and action mapping
         self.prev_frame = None
         self.prev_action_idx = None
@@ -173,6 +179,43 @@ class Insula(Agent):
         tensor = torch.from_numpy(frame).long()
 
         return tensor
+
+    def _hash_experience(self, state: np.ndarray, action_idx: int) -> bytes:
+        """Compute Blake2b hash of (state, action) pair for deduplication.
+
+        Uses Blake2b for fast, cryptographically secure hashing with minimal
+        collision probability (~2^-512). Only used when context_len=1 (Markov case)
+        to deduplicate identical experiences.
+
+        Args:
+            state: [H, W] numpy array (int8, values 0-15)
+            action_idx: Action index (0-4101)
+
+        Returns:
+            64-byte Blake2b hash digest
+
+        Performance:
+            ~1 microsecond per hash on modern CPU
+            Negligible overhead compared to training time
+
+        Design Notes:
+            - Hashes (state, action) only, not outcomes (deterministic environment)
+            - Same (state, action) always produces same hash (reproducible)
+            - Hash collisions impossible in practice (2^-512 probability)
+        """
+        # Blake2b hasher (64-byte output by default)
+        hasher = hashlib.blake2b()
+
+        # Hash state grid (tobytes() is very fast for numpy arrays)
+        # State is already int8, so this is efficient
+        hasher.update(state.tobytes())
+
+        # Hash action index (convert to 4 bytes, little-endian)
+        # 4 bytes sufficient for 0-4101 range
+        hasher.update(action_idx.to_bytes(4, byteorder='little'))
+
+        # Return 64-byte digest
+        return hasher.digest()
 
     def _calculate_patch_size(self, grid_size: int) -> int:
         """Calculate optimal patch size that divides grid_size evenly.
@@ -418,6 +461,16 @@ class Insula(Agent):
 
             # Clear experience buffer when reaching new level (always do this)
             self.experience_buffer.clear()
+
+            # Clear hash set (same lifecycle as experience buffer)
+            # New level = new state space, previous hashes no longer relevant
+            if self.config.context_len == 1 and len(self.experience_hash_set) > 0:
+                self.logger.info(
+                    f"Cleared hash set ({len(self.experience_hash_set)} hashes) "
+                    f"for new level {latest_frame.score}"
+                )
+                self.experience_hash_set.clear()
+
             self.prev_frame = None
             self.prev_action_idx = None
             self.current_score = latest_frame.score
@@ -492,7 +545,43 @@ class Insula(Agent):
                 "completion_reward": 1.0 if level_completion else 0.0,
                 "gameover_reward": gameover_reward,  # 1.0 = survived, 0.0 = died
             }
-            self.experience_buffer.append(experience)
+
+            # Deduplication: Only when context_len == 1 (Markov case)
+            # With context_len > 1, temporal sequences differ even if (state, action) repeats
+            if self.config.context_len == 1:
+                # Compute hash of (state, action) pair
+                exp_hash = self._hash_experience(self.prev_frame, self.prev_action_idx)
+
+                if exp_hash not in self.experience_hash_set:
+                    # New unique experience - store it
+                    self.experience_buffer.append(experience)
+                    self.experience_hash_set.add(exp_hash)
+
+                    self.logger.debug(
+                        f"Stored unique experience (hash set size: {len(self.experience_hash_set)}, "
+                        f"buffer size: {len(self.experience_buffer)})"
+                    )
+                else:
+                    # Duplicate (state, action) pair - skip storage
+                    self.logger.debug(
+                        f"Skipped duplicate experience (state, action) already seen. "
+                        f"Hash set size: {len(self.experience_hash_set)}"
+                    )
+
+                    # Log duplicate count for analysis
+                    self.writer.add_scalar(
+                        "InsulaAgent/duplicate_experiences_skipped",
+                        1,  # Increment counter
+                        self.action_counter,
+                    )
+            else:
+                # With context_len > 1, temporal order matters - always store
+                self.experience_buffer.append(experience)
+
+                self.logger.debug(
+                    f"Stored experience (context_len={self.config.context_len} > 1, "
+                    f"no deduplication applied)"
+                )
 
             # Log replay buffer size periodically
             self.writer.add_scalar(
@@ -500,6 +589,14 @@ class Insula(Agent):
                 len(self.experience_buffer),
                 self.action_counter,
             )
+
+            # Log hash set size when deduplication is active
+            if self.config.context_len == 1:
+                self.writer.add_scalar(
+                    "InsulaAgent/hash_set_size",
+                    len(self.experience_hash_set),
+                    self.action_counter,
+                )
 
     def _select_action(
         self, latest_frame_torch: torch.Tensor, latest_frame: FrameData
