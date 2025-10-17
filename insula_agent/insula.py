@@ -521,12 +521,6 @@ class Insula(Agent):
             # )
             # self.logger.info(f"🔄 Reset optimizer state for level {latest_frame.score}")
 
-            # OPTION 4: Full model reset (nuclear option - NOT RECOMMENDED)
-            # Only use if levels are completely independent tasks
-            # self.pure_dt_model = DecisionTransformer(...).to(self.device)
-            # self.optimizer = torch.optim.Adam(...)
-            # self.logger.info(f"🔄 Full model reset for level {latest_frame.score}")
-
 
     def _store_experience(self, current_frame: torch.Tensor, latest_frame: FrameData):
         if self.prev_frame is not None:
