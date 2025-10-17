@@ -330,7 +330,7 @@ class Insula(Agent):
     def _has_time_elapsed(self) -> bool:
         """Check if 8 hours have elapsed since start."""
         elapsed_hours = time.time() - self.start_time
-        return elapsed_hours >= 3 * 3600 - 5 * 60  # 5 hours with 5 minute buffer
+        return elapsed_hours >= 4 * 3600 - 5 * 60  # 5 hours with 5 minute buffer
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
         """Decide if the agent is done playing or not."""

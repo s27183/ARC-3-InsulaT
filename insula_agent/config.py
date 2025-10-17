@@ -48,7 +48,7 @@ class InsulaConfig:
     # - Supports emergence hypothesis (long-term from short-term composition)
     # - Hippocampal replay timescales (recent experiences, not distant past)
     # - Efficient computation with sufficient pattern recognition capacity
-    context_len: int = 1
+    context_len: int = 10
 
     # ViT State Encoder (Spatial Processing)
     vit_patch_size: int = 8  # Default Patch size (8×8 = 64 patches for 64×64 grid) - will be replaced by dynamic patch size per game
@@ -208,15 +208,15 @@ def cpu_config() -> InsulaConfig:
         embed_dim=128,
         num_layers=2,
         num_heads=4,  # 128/4 = 32
-        context_len=5,  # Smaller context for faster CPU training
+        context_len=10,  # Smaller context for faster CPU training
         # Smaller ViT for CPU
         vit_num_layers=2,
         vit_num_heads=4,
         vit_cell_embed_dim=32,
         # Smaller replay sizes for faster training
         change_replay_size=32,       # 16 → 8
-        completion_replay_size=16,  # 160 → 80
-        gameover_replay_size=8,     # 16 → 8
+        completion_replay_size=32,  # 160 → 80
+        gameover_replay_size=32,     # 16 → 8
     )
 
 
@@ -228,18 +228,18 @@ def gpu_config() -> InsulaConfig:
     """
     return InsulaConfig(
         # Transformer architecture (current proven default)
-        embed_dim=128,
-        num_layers=2,
-        num_heads=4,
-        context_len=5,  # Unified context length for all heads
+        embed_dim=256,
+        num_layers=4,
+        num_heads=8,
+        context_len=10,  # Unified context length for all heads
         # ViT architecture
-        vit_num_layers=2,
-        vit_num_heads=4,
-        vit_cell_embed_dim=32,
+        vit_num_layers=4,
+        vit_num_heads=8,
+        vit_cell_embed_dim=64,
         # Replay sizes
         change_replay_size=64,
-        completion_replay_size=32,
-        gameover_replay_size=16,
+        completion_replay_size=64,
+        gameover_replay_size=64,
     )
 
 
