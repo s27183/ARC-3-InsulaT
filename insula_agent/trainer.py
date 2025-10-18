@@ -164,7 +164,7 @@ def apply_trajectory_rewards(
     return sequence
 
 
-def create_change_sequences(
+def create_change_seqs(
     experience_buffer: deque,
     config: InsulaConfig,
 ) -> list[dict[str, torch.Tensor]]:
@@ -222,7 +222,7 @@ def create_change_sequences(
     return sequences
 
 
-def create_completion_sequences(
+def create_completion_seqs(
     experience_buffer: deque,
     config: InsulaConfig,
 ) -> list[dict[str, torch.Tensor]]:
@@ -273,7 +273,7 @@ def create_completion_sequences(
     return sequences
 
 
-def create_gameover_sequences(
+def create_gameover_seqs(
     experience_buffer: deque,
     config: InsulaConfig,
 ) -> list[dict[str, torch.Tensor]]:
@@ -540,17 +540,17 @@ def train_model(
     """
     # === STEP 1: Create head-specific sequences ===
     # Always create change sequences (required)
-    change_sequences = create_change_sequences(experience_buffer, config)
+    change_sequences = create_change_seqs(experience_buffer, config)
 
     # Conditionally create completion sequences (optional)
     if config.use_completion_head:
-        completion_sequences = create_completion_sequences(experience_buffer, config)
+        completion_sequences = create_completion_seqs(experience_buffer, config)
     else:
         completion_sequences = []
 
     # Conditionally create gameover sequences (optional)
     if config.use_gameover_head:
-        gameover_sequences = create_gameover_sequences(experience_buffer, config)
+        gameover_sequences = create_gameover_seqs(experience_buffer, config)
     else:
         gameover_sequences = []
 
