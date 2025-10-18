@@ -114,6 +114,7 @@ class InsulaConfig:
     # trajectory-level rewards (matches hippocampal replay + dopamine modulation)
     use_learned_decay: bool = False  # Learn decay rates during training (experimental)
     change_temporal_update_decay: float = 1.0  # Action-level rewards → no decay needed, should keep at 1.0
+    change_momentum_temporal_update_decay: float = 1.0  # Action-level rewards → no decay needed, should keep at 1.0
     completion_temporal_update_decay: float = 1.0  # Trajectory rewards → moderate recency bias, should be less than 1
     gameover_temporal_update_decay: float = 1.0  # Trajectory rewards → mild recency bias, should be less than 1
 
@@ -134,6 +135,7 @@ class InsulaConfig:
 
     # Head-Specific Replay Sizes (Importance-Weighted Sampling)
     change_replay_size: int = 8  # Change is frequent → small batch
+    change_momentum_replay_size: int = 8  # Momentum events (moderate frequency) → small batch
     completion_replay_size: int = 8  # Completion is rare → large batch
     gameover_replay_size: int = 8  # GAME_OVER persists → small batch
 
@@ -163,6 +165,11 @@ class InsulaConfig:
         if not (0 < self.change_temporal_update_decay <= 1.0):
             raise ValueError(
                 f"change_temporal_decay ({self.change_temporal_update_decay}) must be in (0, 1]"
+            )
+
+        if not (0 < self.change_momentum_temporal_update_decay <= 1.0):
+            raise ValueError(
+                f"change_momentum_temporal_decay ({self.change_momentum_temporal_update_decay}) must be in (0, 1]"
             )
 
         if not (0 < self.completion_temporal_update_decay <= 1.0):
@@ -215,6 +222,7 @@ def cpu_config() -> InsulaConfig:
         vit_cell_embed_dim=32,
         # Smaller replay sizes for faster training
         change_replay_size=32,       # 16 → 8
+        change_momentum_replay_size=32,  # Match change_replay_size
         completion_replay_size=32,  # 160 → 80
         gameover_replay_size=32,     # 16 → 8
     )
@@ -238,6 +246,7 @@ def gpu_config() -> InsulaConfig:
         vit_cell_embed_dim=64,
         # Replay sizes
         change_replay_size=64,
+        change_momentum_replay_size=64,
         completion_replay_size=64,
         gameover_replay_size=64,
     )

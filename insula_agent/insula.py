@@ -539,9 +539,12 @@ class Insula(Agent):
             frame_changed = not np.array_equal(self.prev_frame, latest_frame_np)
             frame_change_reward = 1.0 if (frame_changed and latest_frame.state is not GameState.GAME_OVER) else 0.0
 
-            # Frame change magnitude
+            # Frame change momentum (increasing change magnitude)
+            # Reward = 1.0 when current action changed MORE cells than previous action
+            # This captures "building momentum" toward impactful moves (e.g., pattern completion)
+            # Distinguishes meaningful progression from trivial exploratory moves
             frame_changes = np.count_nonzero(self.prev_frame != latest_frame_np)
-            change_magnitude_reward = 1.0 if  (frame_changes > self.prev_frame_changes > 0) else 0.0
+            change_momentum_reward = 1.0 if  (frame_changes > self.prev_frame_changes > 0) else 0.0
 
             # Level completion
             level_completion = latest_frame.score != self.current_score
@@ -555,7 +558,7 @@ class Insula(Agent):
                 "state": self.prev_frame,  # Integer grid [64, 64]
                 "action_idx": self.prev_action_idx,  # Unified action index
                 "change_reward": frame_change_reward,
-                "change_magnitude_reward": change_magnitude_reward,
+                "change_momentum_reward": change_momentum_reward,
                 "completion_reward": level_completion_reward,
                 "gameover_reward": gameover_reward,  # 1.0 = survived, 0.0 = died
             }
@@ -661,6 +664,9 @@ class Insula(Agent):
                 # Always get change logits (required)
                 change_logits = logits["change_logits"].squeeze(0)  # [4102]
 
+                # Always get change_momentum logits (required - always present with change head)
+                change_momentum_logits = logits["change_momentum_logits"].squeeze(0)  # [4102]
+
                 # Conditionally get completion logits (optional)
                 completion_logits = None
                 if "completion_logits" in logits:
@@ -673,7 +679,7 @@ class Insula(Agent):
 
                 # Sample from combined action space (multiplicative combination with variable heads)
                 action_idx, coords, coord_idx = self._sample_action(
-                    change_logits, completion_logits, gameover_logits, latest_frame.available_actions
+                    change_logits, change_momentum_logits, completion_logits, gameover_logits, latest_frame.available_actions
                 )
 
                 # Create GameAction directly (following bandit pattern exactly)
@@ -696,6 +702,7 @@ class Insula(Agent):
     def _sample_action(
         self,
         change_logits: torch.Tensor,
+        change_momentum_logits: torch.Tensor,  # Always present (required head)
         completion_logits: None | torch.Tensor ,  # Can be None if head disabled
         gameover_logits: None | torch.Tensor ,    # Can be None if head disabled
         available_actions=None,
@@ -704,6 +711,7 @@ class Insula(Agent):
 
         Args:
             change_logits: [4102] - Logits for predicting frame changes (always present)
+            change_momentum_logits: [4102] - Logits for predicting increasing change magnitude (always present)
             completion_logits: [4102] or None - Logits for predicting level completion (optional)
             gameover_logits: [4102] or None - Logits for predicting survival probability (optional)
             available_actions: List of available actions for masking
@@ -715,6 +723,7 @@ class Insula(Agent):
 
         Reward Semantics:
             - change_reward: 1.0 = grid changed (productive), 0.0 = no change
+            - change_momentum_reward: 1.0 = MORE cells changed than before (building momentum), 0.0 = fewer/equal
             - completion_reward: 1.0 = level completed, 0.0 = not completed
             - gameover_reward: 1.0 = survived (good), 0.0 = died (bad)
 
@@ -724,6 +733,10 @@ class Insula(Agent):
         # Split change logits (always present)
         change_action_logits = change_logits[:6]  # [6] - includes ACTION7
         change_coord_logits = change_logits[6:]  # [4096]
+
+        # Split change_momentum logits (always present)
+        change_momentum_action_logits = change_momentum_logits[:6]  # [6] - includes ACTION7
+        change_momentum_coord_logits = change_momentum_logits[6:]  # [4096]
 
         # Split completion logits if present
         if completion_logits is not None:
@@ -761,6 +774,9 @@ class Insula(Agent):
             # Apply mask to change head (always present)
             change_action_logits = change_action_logits + action_mask
 
+            # Apply mask to change_momentum head (always present)
+            change_momentum_action_logits = change_momentum_action_logits + action_mask
+
             # Apply mask to completion head if present
             if completion_action_logits is not None:
                 completion_action_logits = completion_action_logits + action_mask
@@ -773,6 +789,7 @@ class Insula(Agent):
             if not action6_available:
                 coord_mask = torch.full_like(change_coord_logits, float("-inf"))
                 change_coord_logits = change_coord_logits + coord_mask
+                change_momentum_coord_logits = change_momentum_coord_logits + coord_mask
 
                 if completion_coord_logits is not None:
                     completion_coord_logits = completion_coord_logits + coord_mask
@@ -793,6 +810,17 @@ class Insula(Agent):
 
         # Start with change head probabilities (always present)
         probs_sampling = change_probs_sampling  # [4102]
+
+        # Multiply by change_momentum head probabilities (always present)
+        change_momentum_action_probs = torch.sigmoid(change_momentum_action_logits)  # [6]
+        change_momentum_coord_probs = torch.sigmoid(change_momentum_coord_logits)  # [4096]
+        change_momentum_coord_probs_scaled = change_momentum_coord_probs / self.num_coordinates
+
+        change_momentum_probs_sampling = torch.cat([change_momentum_action_probs, change_momentum_coord_probs_scaled])  # [4102]
+        change_momentum_probs_sampling = change_momentum_probs_sampling / change_momentum_probs_sampling.sum()
+
+        # Multiplicative combination
+        probs_sampling = probs_sampling * change_momentum_probs_sampling  # [4102]
 
         # Multiply by completion head probabilities if available
         if completion_action_logits is not None:

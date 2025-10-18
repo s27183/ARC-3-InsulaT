@@ -389,6 +389,7 @@ class DecisionModel(nn.Module):
         # Learned decay configuration
         use_learned_decay=False,  # Whether to learn decay rates vs use fixed values
         change_decay_init=0.7,  # Initial decay rate for change head (init value if learned)
+        change_momentum_decay_init=1.0,  # Initial decay rate for change_momentum head (action-level, no decay)
         completion_decay_init=0.8,  # Initial decay rate for completion head (init value if learned)
         gameover_decay_init=0.9,  # Initial decay rate for gameover head (init value if learned)
     ):
@@ -404,11 +405,13 @@ class DecisionModel(nn.Module):
         if use_learned_decay:
             # Learnable parameters (optimized by gradient descent)
             self.change_decay_param = nn.Parameter(torch.tensor(change_decay_init))
+            self.change_momentum_decay_param = nn.Parameter(torch.tensor(change_momentum_decay_init))
             self.completion_decay_param = nn.Parameter(torch.tensor(completion_decay_init))
             self.gameover_decay_param = nn.Parameter(torch.tensor(gameover_decay_init))
         else:
             # Fixed buffers (saved with checkpoint but not optimized)
             self.register_buffer('change_decay_param', torch.tensor(change_decay_init))
+            self.register_buffer('change_momentum_decay_param', torch.tensor(change_momentum_decay_init))
             self.register_buffer('completion_decay_param', torch.tensor(completion_decay_init))
             self.register_buffer('gameover_decay_param', torch.tensor(gameover_decay_init))
 
@@ -463,15 +466,19 @@ class DecisionModel(nn.Module):
             nn.Linear(embed_dim // 2, 4096),  # 64x64 coordinates
         )
 
-        # Change magnitude head
-        self.change_magnitude_head = nn.Sequential(
+        # Change momentum head: predicts P(action causes MORE change than recent actions)
+        # Learns to identify actions that build momentum toward impactful pattern completion
+        # Reward semantics:
+        #   - 1.0: Action changed MORE cells than previous action (momentum building)
+        #   - 0.0: Action changed FEWER/EQUAL cells (momentum lost/maintained)
+        self.change_momentum_head = nn.Sequential(
                 nn.LayerNorm(embed_dim),
                 nn.Linear(embed_dim, embed_dim // 2),
                 nn.GELU(),
                 nn.Dropout(0.1),
                 nn.Linear(embed_dim // 2, 6), # ACTION1-5, ACTION7
         )
-        self.change_magnitude_coord_head = nn.Sequential(
+        self.change_momentum_coord_head = nn.Sequential(
                 nn.LayerNorm(embed_dim),
                 nn.Linear(embed_dim, embed_dim // 2),
                 nn.GELU(),
@@ -608,21 +615,21 @@ class DecisionModel(nn.Module):
                     [change_action_logits, change_coord_logits], dim=2
                 )  # [batch, seq_len+1, 4102] - concat on dim=2 for 3D tensors
 
-                change_magnitude_action_logits = self.change_magnitude_action_head(
+                change_momentum_action_logits = self.change_momentum_head(
                         state_reprs
                 ) # [batch, seq_len+1, 6]
-                change_magnitude_coord_logits = self.change_magnitude_coord_head(
+                change_momentum_coord_logits = self.change_momentum_coord_head(
                         state_reprs
                 ) # [batch, seq_len+1, 4096]
-                change_magnitude_logits = torch.cat(
-                    [change_magnitude_action_logits, change_magnitude_coord_logits], dim=2
+                change_momentum_logits = torch.cat(
+                    [change_momentum_action_logits, change_momentum_coord_logits], dim=2
                 )  # [batch, seq_len+1, 4102] - concat on dim=2 for 3D tensors
 
 
-                # Build output dict - always include change logits and change magnitude logits
+                # Build output dict - always include change logits and change momentum logits
                 output = {
                         "change_logits": change_logits,
-                        "change_magnitude_logits": change_magnitude_logits,
+                        "change_momentum_logits": change_momentum_logits,
                 }
 
                 # Completion head (optional)
@@ -669,21 +676,21 @@ class DecisionModel(nn.Module):
                     [change_action_logits, change_coord_logits], dim=1
                 )  # [batch, 4102] - concat on dim=1 for 2D tensors
 
-                # Change magnitude head
-                change_magnitude_action_logits = self.change_magnitude_action_head(
+                # Change momentum head
+                change_momentum_action_logits = self.change_momentum_head(
                         final_repr
                 ) # [batch, 6]
-                change_magnitude_coord_logits = self.change_magnitude_coord_head(
+                change_momentum_coord_logits = self.change_momentum_coord_head(
                         final_repr
                 ) # [batch, 4096]
-                change_magnitude_logits = torch.cat(
-                    [change_magnitude_action_logits, change_magnitude_coord_logits], dim=1
+                change_momentum_logits = torch.cat(
+                    [change_momentum_action_logits, change_momentum_coord_logits], dim=1
                 )
 
-                # Build output dict - always include change logits and change magnitude logits
+                # Build output dict - always include change logits and change momentum logits
                 output = {
                         "change_logits": change_logits,
-                        "change_magnitude_logits": change_magnitude_logits
+                        "change_momentum_logits": change_momentum_logits
                 }
 
                 # Completion head (optional)
@@ -730,21 +737,21 @@ class DecisionModel(nn.Module):
                 [change_action_logits, change_coord_logits], dim=1
             )  # [batch, 4102] - concat on dim=1 for 2D tensors
 
-            # Change magnitude head
-            change_magnitude_action_logits = self.change_magnitude_action_head(
+            # Change momentum head
+            change_momentum_action_logits = self.change_momentum_head(
                     final_repr
             ) # [batch, 6] - ACTION1-5, ACTION7
-            change_magnitude_coord_logits = self.change_magnitude_coord_head(
+            change_momentum_coord_logits = self.change_momentum_coord_head(
                     final_repr
             ) # [batch, 4096] - coordinates
-            change_magnitude_logits = torch.cat(
-                [change_magnitude_action_logits, change_magnitude_coord_logits], dim=1
+            change_momentum_logits = torch.cat(
+                [change_momentum_action_logits, change_momentum_coord_logits], dim=1
             ) # [batch, 4102] - concat on dim=1 for 2D tensors
 
-            # Build output dict - always include change logits and change magnitude logits
+            # Build output dict - always include change logits and change momentum logits
             output = {
                     "change_logits": change_logits,
-                    "change_magnitude_logits": change_magnitude_logits
+                    "change_momentum_logits": change_momentum_logits
             }
 
             # Completion head (optional)
@@ -783,6 +790,15 @@ class DecisionModel(nn.Module):
             decay: float in (0, 1], clamped to valid range
         """
         return torch.clamp(self.change_decay_param, min=1e-7, max=1.0).item()
+
+    @property
+    def change_momentum_decay(self) -> float:
+        """Current change_momentum head decay rate (learned or fixed).
+
+        Returns:
+            decay: float in (0, 1], clamped to valid range
+        """
+        return torch.clamp(self.change_momentum_decay_param, min=1e-7, max=1.0).item()
 
     @property
     def completion_decay(self) -> float:
