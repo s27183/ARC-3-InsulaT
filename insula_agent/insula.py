@@ -129,7 +129,7 @@ class Insula(Agent):
         # Game state and action mapping
         self.prev_frame = None
         self.prev_action_idx = None
-        self.win_counter = 0
+        self.prev_frame_changes = 0
 
         self.action_list = [
             GameAction.ACTION1,
@@ -359,6 +359,10 @@ class Insula(Agent):
         Returns:
             action: The action to take
         """
+        # Initizlize the game when it's NOT_PLAYED
+        if latest_frame.state is GameState.NOT_PLAYED:
+            self._reset(latest_frame.state)
+
         # Convert current frame to torch tensor
         current_frame = None
         if latest_frame.state is not GameState.NOT_PLAYED:
@@ -398,18 +402,9 @@ class Insula(Agent):
         # Check level completion
         self._check_level_completion(latest_frame=latest_frame)
 
-        # Reset when the game when it's initialized or when GAME_OVER is encountered
-        if latest_frame.state in  [GameState.NOT_PLAYED, GameState.GAME_OVER]:
-            self.prev_frame = None
-            self.prev_action_idx = None
-            action = GameAction.RESET
-            if latest_frame.state is GameState.NOT_PLAYED:
-                action.reasoning = "Game needs reset due to NOT_PLAYED"
-                self.logger.info(f"Game {self.game_id} is initialized")
-            else:
-                action.reasoning = "Game needs reset due to GAME_OVER"
-                self.logger.info(f"🤖 GAME OVER. Game {self.game_id} is reset. Current score: {self.current_score}")
-            return action
+        # Reset when the game when it's GAME_OVER
+        if latest_frame.state is GameState.GAME_OVER:
+            self._reset(latest_frame.state)
 
 
         # If frame processing failed, reset tracking and return a random action
@@ -428,8 +423,9 @@ class Insula(Agent):
             latest_frame_torch=current_frame, latest_frame=latest_frame
         )
 
-        # Store current frame and action for next experience creation
+        # Store the current frame changes, current frame, and action for next experience creation
         # Keep as integer grid [H, W] with values 0-15 (int8 for memory efficiency)
+        self.prev_frame_changes = np.count_nonzero(self.prev_frame != current_frame.cpu().numpy().astype(np.int8))
         self.prev_frame = current_frame.cpu().numpy().astype(np.int8)
 
         # Store unified action index: 0-4 for ACTION1-5, 5 for ACTION7, 6+ for coordinates
@@ -441,8 +437,19 @@ class Insula(Agent):
         # Increment action counter
         self.action_counter += 1
 
-
         return selected_action
+
+    def _reset(self, game_state: GameState):
+        self.prev_frame = None
+        self.prev_action_idx = None
+        action = GameAction.RESET
+        if game_state is GameState.NOT_PLAYED:
+            action.reasoning = "Game needs reset due to NOT_PLAYED"
+            self.logger.info(f"Game {self.game_id} is initialized")
+        else:
+            action.reasoning = "Game needs reset due to GAME_OVER"
+            self.logger.info(f"🤖 GAME OVER. Game {self.game_id} is reset. Current score: {self.current_score}")
+        return action
 
     def _should_train_model(self, latest_frame: FrameData) -> bool:
         should_train_model = (
@@ -474,6 +481,7 @@ class Insula(Agent):
             self.prev_frame = None
             self.prev_action_idx = None
             self.current_score = latest_frame.score
+            self.prev_frame_changes = 0
 
             # Transfer Learning Strategy: Keep trained model by default
             # Rationale: Game rules remain constant, ViT learns abstract spatial patterns
@@ -526,8 +534,19 @@ class Insula(Agent):
         if self.prev_frame is not None:
             # Convert current frame to numpy int8 for comparison (memory efficient - ARC colors are 0-15)
             latest_frame_np = current_frame.cpu().numpy().astype(np.int8)
+
+            # Frame change
             frame_changed = not np.array_equal(self.prev_frame, latest_frame_np)
+            frame_change_reward = 1.0 if (frame_changed and latest_frame.state is not GameState.GAME_OVER) else 0.0
+
+            # Frame change magnitude
+            frame_changes = np.count_nonzero(self.prev_frame != latest_frame_np)
+            change_magnitude_reward = 1.0 if  (frame_changes > self.prev_frame_changes > 0) else 0.0
+
+            # Level completion
             level_completion = latest_frame.score != self.current_score
+            level_completion_reward = 1.0 if level_completion else 0.0
+
             # Inverted GAME_OVER: 1.0 = survived (good), 0.0 = GAME_OVER (bad)
             game_over_occurred = latest_frame.state == GameState.GAME_OVER
             gameover_reward = 0.0 if game_over_occurred else 1.0
@@ -535,8 +554,9 @@ class Insula(Agent):
             experience = {
                 "state": self.prev_frame,  # Integer grid [64, 64]
                 "action_idx": self.prev_action_idx,  # Unified action index
-                "change_reward": 1.0 if frame_changed else 0.0,
-                "completion_reward": 1.0 if level_completion else 0.0,
+                "change_reward": frame_change_reward,
+                "change_magnitude_reward": change_magnitude_reward,
+                "completion_reward": level_completion_reward,
                 "gameover_reward": gameover_reward,  # 1.0 = survived, 0.0 = died
             }
 
@@ -761,7 +781,7 @@ class Insula(Agent):
                     gameover_coord_logits = gameover_coord_logits + coord_mask
 
         # Apply sigmoid to convert logits to probabilities (change head always present)
-        change_action_probs = torch.sigmoid(change_action_logits)  # [5]
+        change_action_probs = torch.sigmoid(change_action_logits)  # [6]
         change_coord_probs = torch.sigmoid(change_coord_logits)  # [4096]
 
         # Scale coordinate probabilities

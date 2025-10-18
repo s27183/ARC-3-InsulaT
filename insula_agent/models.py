@@ -463,6 +463,22 @@ class DecisionModel(nn.Module):
             nn.Linear(embed_dim // 2, 4096),  # 64x64 coordinates
         )
 
+        # Change magnitude head
+        self.change_magnitude_head = nn.Sequential(
+                nn.LayerNorm(embed_dim),
+                nn.Linear(embed_dim, embed_dim // 2),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(embed_dim // 2, 6), # ACTION1-5, ACTION7
+        )
+        self.change_magnitude_coord_head = nn.Sequential(
+                nn.LayerNorm(embed_dim),
+                nn.Linear(embed_dim, embed_dim // 2),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(embed_dim // 2, 4096),
+        )
+
         # Completion head (optional: predict level completion)
         if self.use_completion_head:
             # Action head for predicting level completion caused by discrete actions (ACTION1-5, ACTION7)
@@ -584,7 +600,7 @@ class DecisionModel(nn.Module):
                 # Multi-head prediction - Change head (always present)
                 change_action_logits = self.change_action_head(
                     state_reprs
-                )  # [batch, seq_len+1, 5] - ACTION1-5 at each state
+                )  # [batch, seq_len+1, 6] - ACTION1-5 at each state
                 change_coord_logits = self.change_coord_head(
                     state_reprs
                 )  # [batch, seq_len+1, 4096] - coordinates at each state
@@ -592,14 +608,28 @@ class DecisionModel(nn.Module):
                     [change_action_logits, change_coord_logits], dim=2
                 )  # [batch, seq_len+1, 4102] - concat on dim=2 for 3D tensors
 
-                # Build output dict - always include change logits
-                output = {"change_logits": change_logits}
+                change_magnitude_action_logits = self.change_magnitude_action_head(
+                        state_reprs
+                ) # [batch, seq_len+1, 6]
+                change_magnitude_coord_logits = self.change_magnitude_coord_head(
+                        state_reprs
+                ) # [batch, seq_len+1, 4096]
+                change_magnitude_logits = torch.cat(
+                    [change_magnitude_action_logits, change_magnitude_coord_logits], dim=2
+                )  # [batch, seq_len+1, 4102] - concat on dim=2 for 3D tensors
+
+
+                # Build output dict - always include change logits and change magnitude logits
+                output = {
+                        "change_logits": change_logits,
+                        "change_magnitude_logits": change_magnitude_logits,
+                }
 
                 # Completion head (optional)
                 if self.use_completion_head:
                     completion_action_logits = self.completion_action_head(
                         state_reprs
-                    )  # [batch, seq_len+1, 5]
+                    )  # [batch, seq_len+1, 6]
                     completion_coord_logits = self.completion_coord_head(
                         state_reprs
                     )  # [batch, seq_len+1, 4096]
@@ -631,7 +661,7 @@ class DecisionModel(nn.Module):
                 # Multi-head prediction - Change head (always present)
                 change_action_logits = self.change_action_head(
                     final_repr
-                )  # [batch, 5] - ACTION1-5
+                )  # [batch, 6] - ACTION1-5
                 change_coord_logits = self.change_coord_head(
                     final_repr
                 )  # [batch, 4096] - coordinates
@@ -639,8 +669,22 @@ class DecisionModel(nn.Module):
                     [change_action_logits, change_coord_logits], dim=1
                 )  # [batch, 4102] - concat on dim=1 for 2D tensors
 
-                # Build output dict - always include change logits
-                output = {"change_logits": change_logits}
+                # Change magnitude head
+                change_magnitude_action_logits = self.change_magnitude_action_head(
+                        final_repr
+                ) # [batch, 6]
+                change_magnitude_coord_logits = self.change_magnitude_coord_head(
+                        final_repr
+                ) # [batch, 4096]
+                change_magnitude_logits = torch.cat(
+                    [change_magnitude_action_logits, change_magnitude_coord_logits], dim=1
+                )
+
+                # Build output dict - always include change logits and change magnitude logits
+                output = {
+                        "change_logits": change_logits,
+                        "change_magnitude_logits": change_magnitude_logits
+                }
 
                 # Completion head (optional)
                 if self.use_completion_head:
@@ -686,8 +730,22 @@ class DecisionModel(nn.Module):
                 [change_action_logits, change_coord_logits], dim=1
             )  # [batch, 4102] - concat on dim=1 for 2D tensors
 
-            # Build output dict - always include change logits
-            output = {"change_logits": change_logits}
+            # Change magnitude head
+            change_magnitude_action_logits = self.change_magnitude_action_head(
+                    final_repr
+            ) # [batch, 6] - ACTION1-5, ACTION7
+            change_magnitude_coord_logits = self.change_magnitude_coord_head(
+                    final_repr
+            ) # [batch, 4096] - coordinates
+            change_magnitude_logits = torch.cat(
+                [change_magnitude_action_logits, change_magnitude_coord_logits], dim=1
+            ) # [batch, 4102] - concat on dim=1 for 2D tensors
+
+            # Build output dict - always include change logits and change magnitude logits
+            output = {
+                    "change_logits": change_logits,
+                    "change_magnitude_logits": change_magnitude_logits
+            }
 
             # Completion head (optional)
             if self.use_completion_head:
