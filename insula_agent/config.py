@@ -48,7 +48,7 @@ class InsulaConfig:
     # - Supports emergence hypothesis (long-term from short-term composition)
     # - Hippocampal replay timescales (recent experiences, not distant past)
     # - Efficient computation with sufficient pattern recognition capacity
-    context_len: int = 10
+    context_len: int = 1
 
     # ViT State Encoder (Spatial Processing)
     vit_patch_size: int = 8  # Default Patch size (8×8 = 64 patches for 64×64 grid) - will be replaced by dynamic patch size per game
@@ -63,8 +63,8 @@ class InsulaConfig:
     # Multi-Head Prediction Architecture
     # TODO: enable/disable learned heads for ablation studies
     use_change_head: bool = True  # Always True (change head is required)
-    use_completion_head: bool = True  # Predict level completion (trajectory-level rewards)
-    use_gameover_head: bool = True  # Predict GAME_OVER avoidance (trajectory-level rewards)
+    use_completion_head: bool = False  # Predict level completion (trajectory-level rewards)
+    use_gameover_head: bool = False  # Predict GAME_OVER avoidance (trajectory-level rewards)
 
     # ============================================================================
     # TRAINING CONFIGURATION
@@ -90,7 +90,7 @@ class InsulaConfig:
     # When True: Model predicts at ALL states in sequence (PAST + PRESENT forward predictions)
     # When False: Model predicts only at final state (PRESENT forward prediction only)
     # Recommendation: True (provides k+1 training signals per sequence, improves representations)
-    temporal_update: bool = False
+    temporal_update: bool = True
 
     # Temporal Weighting (ONLY used when temporal_update=True)
     # Controls relative weighting of predictions at different timesteps in sequence
@@ -208,7 +208,7 @@ def cpu_config() -> InsulaConfig:
         embed_dim=128,
         num_layers=2,
         num_heads=4,  # 128/4 = 32
-        context_len=10,  # Smaller context for faster CPU training
+        context_len=1,  # Smaller context for faster CPU training
         # Smaller ViT for CPU
         vit_num_layers=2,
         vit_num_heads=4,
@@ -231,7 +231,7 @@ def gpu_config() -> InsulaConfig:
         embed_dim=256,
         num_layers=4,
         num_heads=8,
-        context_len=10,  # Unified context length for all heads
+        context_len=1,  # Unified context length for all heads
         # ViT architecture
         vit_num_layers=4,
         vit_num_heads=8,
