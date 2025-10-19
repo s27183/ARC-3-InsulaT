@@ -221,10 +221,10 @@ def cpu_config() -> InsulaConfig:
         vit_num_heads=4,
         vit_cell_embed_dim=32,
         # Smaller replay sizes for faster training
-        change_replay_size=32,       # 16 → 8
-        change_momentum_replay_size=32,  # Match change_replay_size
-        completion_replay_size=32,  # 160 → 80
-        gameover_replay_size=32,     # 16 → 8
+        change_replay_size=8,       # 16 → 8
+        change_momentum_replay_size=8,  # Match change_replay_size
+        completion_replay_size=8,  # 160 → 80
+        gameover_replay_size=8,     # 16 → 8
     )
 
 
