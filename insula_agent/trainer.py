@@ -154,15 +154,16 @@ def apply_trajectory_rewards(
     # If final action led to level completion, credit actions that changed the grid
     # Rationale: Only productive actions (change_reward=1.0) should receive credit
     if final_completion == 1.0:
-        mask = sequence["all_change_rewards"] == 1.0  # [k+1] boolean mask
-        sequence["all_completion_rewards"][mask] = 1.0
+        mask = sequence["all_change_rewards"][:-1] == 1.0  # [k] boolean mask (exclude final state)
+        sequence["all_completion_rewards"][:-1][mask] = 1.0
 
     # Trajectory-level reward assignment for GAMEOVER
     # If final action led to GAME_OVER (death), penalize actions that changed the grid
     # Rationale: Only productive actions contributed to failure (invalid actions are irrelevant)
     if final_gameover == 0.0:
-        mask = sequence["all_change_rewards"] == 1.0  # [k+1] boolean mask
-        sequence["all_gameover_rewards"][mask] = 0.0
+        sequence["all_gameover_rewards"][:] = 0.0
+        mask = sequence["all_completion_rewards"][:-1] == 1.0  # [k] boolean mask (exclude final state)
+        sequence["all_gameover_rewards"][:-1][mask] = 1.0
 
     # Change rewards stay UNCHANGED - action-level causality (immediate)
     # sequence["all_change_rewards"] is NOT modified
@@ -583,7 +584,7 @@ def train_model(
 ) -> None:
     """Train Insula with unified context length and gradient accumulation.
 
-    Note: Buffer size check performed by caller (insula.py).
+    Note: Buffer size check performed by caller (play.py).
     This function assumes buffer is large enough for sequence creation.
 
     Args:
