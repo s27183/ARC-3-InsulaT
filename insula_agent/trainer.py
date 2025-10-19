@@ -229,57 +229,8 @@ def create_change_seqs(
     return sequences
 
 
-def create_change_momentum_seqs(
-    experience_buffer: deque,
-    config: InsulaConfig,
-) -> list[dict[str, torch.Tensor]]:
-    """Create change momentum sequences: outcome-anchored sampling of accelerating changes.
-
-    Samples sequences where change_momentum_reward=1.0 (actions that increased change magnitude).
-    Similar to completion/gameover heads, this uses outcome-anchored sampling to prioritize
-    learning from actions that successfully built momentum.
-
-    Args:
-        experience_buffer: Deque of experience dictionaries
-        config: Configuration dictionary with:
-            - "change_momentum_replay_size": int (default: same as change_replay_size)
-            - "context_len": int (default 1, unified for all heads)
-
-    Returns:
-        List of sequence dictionaries, all with length context_len.
-        Returns empty list if no momentum events found.
-    """
-    replay_size = config.change_momentum_replay_size
-    context_len = config.context_len
-
-    # Find all momentum-building events (change_momentum_reward == 1.0)
-    momentum_idx = [
-        i for i, exp in enumerate(experience_buffer)
-        if exp["change_momentum_reward"] == 1.0
-    ]
-
-    if not momentum_idx:
-        return []  # No momentum events yet
-
-    # Determine sampling strategy: WITH or WITHOUT replacement
-    if len(momentum_idx) < replay_size:
-        # SPARSE: Sample WITH replacement (oversample)
-        sampled_indices = np.random.choice(momentum_idx, size=replay_size, replace=True)
-    else:
-        # ABUNDANT: Sample WITHOUT replacement (subsample)
-        sampled_indices = np.random.choice(momentum_idx, size=replay_size, replace=False)
-
-    sequences = []
-    for momentum_idx_val in sampled_indices:
-        # Extract sequence ENDING at momentum event
-        actual_context_len = min(context_len, momentum_idx_val)
-        start_idx = momentum_idx_val - actual_context_len
-        sequence = extract_sequence(experience_buffer, start_idx, actual_context_len)
-        # Apply trajectory reward revaluation (momentum uses action-level, so unchanged)
-        sequence = apply_trajectory_rewards(sequence, config)
-        sequences.append(sequence)
-
-    return sequences
+# Note: create_change_momentum_seqs() removed - momentum head uses same sequences as change head
+# Both are exploration signals with action-level rewards, so they share the same sampling strategy
 
 
 def create_completion_seqs(
@@ -603,10 +554,8 @@ def train_model(
     """
     # === STEP 1: Create head-specific sequences ===
     # Always create change sequences (required)
+    # Note: change_momentum head reuses these same sequences (both are exploration signals)
     change_sequences = create_change_seqs(experience_buffer, config)
-
-    # Always create change_momentum sequences (required)
-    change_momentum_sequences = create_change_momentum_seqs(experience_buffer, config)
 
     # Conditionally create completion sequences (optional)
     if config.use_completion_head:
@@ -621,24 +570,22 @@ def train_model(
         gameover_sequences = []
 
     # Skip training if no sequences
-    if not change_sequences and not change_momentum_sequences and not completion_sequences and not gameover_sequences:
+    if not change_sequences and not completion_sequences and not gameover_sequences:
         return None
 
     # === STEP 2: Direct batching (all sequences same length) ===
     # With unified context_len, all sequences have same length → no grouping needed
     # Simply count how many batches we'll process (1 per head if sequences exist)
-    num_batches = (1 if change_sequences else 0) + \
-                  (1 if change_momentum_sequences else 0) + \
+    # Note: change and momentum share sequences, so count as 2 batches if change_sequences exist
+    num_batches = (2 if change_sequences else 0) + \
                   (1 if completion_sequences else 0) + \
                   (1 if gameover_sequences else 0)
 
     # Log training info
-    total_sequences = len(change_sequences) + len(change_momentum_sequences) + len(completion_sequences) + len(gameover_sequences)
     logger.info(
         f"🎯 Starting Insula training. Game: {game_id}. "
-        f"{total_sequences} sequences ({len(change_sequences)} change, "
-        f"{len(change_momentum_sequences)} momentum, "
-        f"{len(completion_sequences)} completion, {len(gameover_sequences)} gameover) "
+        f"{len(change_sequences)} change/momentum sequences (shared), "
+        f"{len(completion_sequences)} completion, {len(gameover_sequences)} gameover "
         f"→ {num_batches} batches (unified context_len={config.context_len})"
     )
 
@@ -665,10 +612,10 @@ def train_model(
             accumulated_metrics["change_loss"] += metrics["loss"]
             accumulated_metrics["num_batches"] += 1
 
-        # === STEP 5: Process change_momentum head (direct batching) ===
-        if change_momentum_sequences:
+        # === STEP 5: Process change_momentum head (reuses change sequences) ===
+        if change_sequences:
             loss, metrics = train_head_batch(
-                model, change_momentum_sequences, head_type="change_momentum", config=config, device=device
+                model, change_sequences, head_type="change_momentum", config=config, device=device
             )
             accumulated_metrics["change_momentum_loss"] += metrics["loss"]
             accumulated_metrics["num_batches"] += 1
