@@ -462,7 +462,7 @@ class Insula(Agent):
     def _should_train_model(self, latest_frame: FrameData) -> bool:
         should_train_model = (
               self.action_counter % self.train_frequency == 0 or
-              latest_frame.state == GameState.GAME_OVER or
+              latest_frame.state is GameState.GAME_OVER or
               latest_frame.score > self.current_score
         )
         return should_train_model
@@ -559,7 +559,7 @@ class Insula(Agent):
             level_completion_reward = 1.0 if level_completion else 0.0
 
             # Inverted GAME_OVER: 1.0 = survived (good), 0.0 = GAME_OVER (bad)
-            game_over_occurred = latest_frame.state == GameState.GAME_OVER
+            game_over_occurred = latest_frame.state is GameState.GAME_OVER
             gameover_reward = 0.0 if game_over_occurred else 1.0
 
             experience = {
