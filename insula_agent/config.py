@@ -134,8 +134,8 @@ class InsulaConfig:
     use_trajectory_rewards: bool = True  # Enable reward revaluation during replay
 
     # Head-Specific Replay Sizes (Importance-Weighted Sampling)
-    change_replay_size: int = 8  # Change is frequent → small batch
-    change_momentum_replay_size: int = 8  # Momentum events (moderate frequency) → small batch
+    change_replay_size: int = 8  # Change is frequent → small batch (shared with momentum head)
+    # Note: change_momentum_replay_size removed - momentum head shares change_replay_size
     completion_replay_size: int = 8  # Completion is rare → large batch
     gameover_replay_size: int = 8  # GAME_OVER persists → small batch
 
