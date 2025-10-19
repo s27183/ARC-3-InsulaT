@@ -548,11 +548,11 @@ class Insula(Agent):
             frame_change_reward = 1.0 if (frame_changed and latest_frame.state is not GameState.GAME_OVER) else 0.0
 
             # Frame change momentum (increasing change magnitude)
-            # Reward = 1.0 when current action changed MORE cells than previous action
+            # Reward = 1.0 when current action changed MORE cells than previous action AND didn't cause GAME_OVER
             # This captures "building momentum" toward impactful moves (e.g., pattern completion)
-            # Distinguishes meaningful progression from trivial exploratory moves
+            # Distinguishes meaningful progression from trivial/destructive exploratory moves
             frame_changes = np.count_nonzero(self.prev_frame != latest_frame_np)
-            change_momentum_reward = 1.0 if  (frame_changes > self.prev_frame_changes) else 0.0
+            change_momentum_reward = 1.0 if (frame_changes > self.prev_frame_changes and latest_frame.state is not GameState.GAME_OVER) else 0.0
 
             # Level completion
             level_completion = latest_frame.score != self.current_score
