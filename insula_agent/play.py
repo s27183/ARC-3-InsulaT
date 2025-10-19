@@ -361,7 +361,8 @@ class Insula(Agent):
         """
         # Initizlize the game when it's NOT_PLAYED
         if latest_frame.state is GameState.NOT_PLAYED:
-            self._reset(latest_frame.state)
+            selected_action = self._reset(latest_frame.state)
+            return selected_action
 
         # Convert current frame to torch tensor
         current_frame = None
@@ -404,7 +405,8 @@ class Insula(Agent):
 
         # Reset when the game when it's GAME_OVER
         if latest_frame.state is GameState.GAME_OVER:
-            self._reset(latest_frame.state)
+            selected_action = self._reset(latest_frame.state)
+            return selected_action
 
 
         # If frame processing failed, reset tracking and return a random action
@@ -412,11 +414,11 @@ class Insula(Agent):
             self.logger.info(f"Error in frame processing for Game {self.game_id}. Use randome action selection")
             self.prev_frame = None
             self.prev_action_idx = None
-            action = random.choice(self.action_list[:5])  # Random ACTION1-ACTION5
-            action.reasoning = (
-                f"Encountered a no-op frame, use a random action - {action.value}"
+            selected_action = random.choice(self.action_list[:5])  # Random ACTION1-ACTION5
+            selected_action.reasoning = (
+                f"Encountered a no-op frame, use a random action - {selected_action.value}"
             )
-            return action
+            return selected_action
 
         # If no reset and no error, get action predictions from Insula model (following bandit pattern exactly)
         action_idx, coord_idx, selected_action = self._select_action(
@@ -425,7 +427,11 @@ class Insula(Agent):
 
         # Store the current frame changes, current frame, and action for next experience creation
         # Keep as integer grid [H, W] with values 0-15 (int8 for memory efficiency)
-        self.prev_frame_changes = np.count_nonzero(self.prev_frame != current_frame.cpu().numpy().astype(np.int8))
+        if self.prev_frame is not None:
+            self.prev_frame_changes = np.count_nonzero(self.prev_frame != current_frame.cpu().numpy().astype(np.int8))
+        else:
+            self.prev_frame_changes = 0  # First action after reset has no baseline
+
         self.prev_frame = current_frame.cpu().numpy().astype(np.int8)
 
         # Store unified action index: 0-4 for ACTION1-5, 5 for ACTION7, 6+ for coordinates
@@ -442,6 +448,8 @@ class Insula(Agent):
     def _reset(self, game_state: GameState):
         self.prev_frame = None
         self.prev_action_idx = None
+        self.prev_frame_changes = 0  # Reset momentum baseline
+
         action = GameAction.RESET
         if game_state is GameState.NOT_PLAYED:
             action.reasoning = "Game needs reset due to NOT_PLAYED"
@@ -544,7 +552,7 @@ class Insula(Agent):
             # This captures "building momentum" toward impactful moves (e.g., pattern completion)
             # Distinguishes meaningful progression from trivial exploratory moves
             frame_changes = np.count_nonzero(self.prev_frame != latest_frame_np)
-            change_momentum_reward = 1.0 if  (frame_changes > self.prev_frame_changes > 0) else 0.0
+            change_momentum_reward = 1.0 if  (frame_changes > self.prev_frame_changes) else 0.0
 
             # Level completion
             level_completion = latest_frame.score != self.current_score
