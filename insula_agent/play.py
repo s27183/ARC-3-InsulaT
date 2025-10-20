@@ -276,13 +276,13 @@ class Insula(Agent):
 
         self.num_coordinates = self.grid_size * self.grid_size
 
-        # Calculate optimal patch size
-        patch_size = self._calculate_patch_size(self.grid_size)
+        # Calculate optimal patch size (store for potential resets)
+        self.patch_size = self._calculate_patch_size(self.grid_size)
 
         self.logger.info(
             f"🎯 Detected grid size: {h}×{w}. "
-            f"Using grid_size={self.grid_size}, patch_size={patch_size}, "
-            f"num_patches={self.grid_size//patch_size}×{self.grid_size//patch_size}"
+            f"Using grid_size={self.grid_size}, patch_size={self.patch_size}, "
+            f"num_patches={self.grid_size//self.patch_size}×{self.grid_size//self.patch_size}"
         )
 
         # Initialize model with detected parameters
@@ -293,7 +293,7 @@ class Insula(Agent):
             context_len=self.config.context_len,  # Unified context length for all heads
             # ViT encoder parameters with dynamic patch size
             vit_cell_embed_dim=self.config.vit_cell_embed_dim,
-            vit_patch_size=patch_size,  # 🔥 Dynamic based on grid size!
+            vit_patch_size=self.patch_size,  # 🔥 Dynamic based on grid size!
             vit_num_layers=self.config.vit_num_layers,
             vit_num_heads=self.config.vit_num_heads,
             vit_dropout=self.config.vit_dropout,
@@ -301,6 +301,7 @@ class Insula(Agent):
             vit_pos_dim_ratio=self.config.vit_pos_dim_ratio,
             vit_use_patch_pos_encoding=self.config.vit_use_patch_pos_encoding,
             # Head configuration
+            use_change_momentum_head=self.config.use_change_momentum_head,
             use_completion_head=self.config.use_completion_head,
             use_gameover_head=self.config.use_gameover_head,
             # Learned decay configuration
@@ -323,7 +324,7 @@ class Insula(Agent):
 
         self.logger.info(
             f"✅ Model initialized successfully: {self.grid_size}×{self.grid_size} grid, "
-            f"patch_size={patch_size}, embed_dim={self.config.embed_dim}, "
+            f"patch_size={self.patch_size}, embed_dim={self.config.embed_dim}, "
             f"total_params={sum(p.numel() for p in self.decision_model.parameters()):,}"
         )
 
@@ -467,6 +468,56 @@ class Insula(Agent):
         )
         return should_train_model
 
+    def _reset_model_and_optimizer(self, level: int) -> None:
+        """Reset decision model and optimizer to fresh state.
+
+        Used when reset_on_level_completion=True for ablation studies.
+        Allows testing whether transfer learning helps or hurts across levels.
+
+        Args:
+            level: New level number (for logging)
+        """
+        # Reinitialize model with same architecture but fresh weights
+        self.decision_model = DecisionModel(
+            embed_dim=self.config.embed_dim,
+            num_layers=self.config.num_layers,
+            num_heads=self.config.num_heads,
+            context_len=self.config.context_len,
+            # ViT encoder parameters with dynamic patch size
+            vit_cell_embed_dim=self.config.vit_cell_embed_dim,
+            vit_patch_size=self.patch_size,  # Use stored patch size
+            vit_num_layers=self.config.vit_num_layers,
+            vit_num_heads=self.config.vit_num_heads,
+            vit_dropout=self.config.vit_dropout,
+            vit_use_cls_token=self.config.vit_use_cls_token,
+            vit_pos_dim_ratio=self.config.vit_pos_dim_ratio,
+            vit_use_patch_pos_encoding=self.config.vit_use_patch_pos_encoding,
+            # Head configuration
+            use_change_momentum_head=self.config.use_change_momentum_head,
+            use_completion_head=self.config.use_completion_head,
+            use_gameover_head=self.config.use_gameover_head,
+            # Learned decay configuration
+            use_learned_decay=self.config.use_learned_decay,
+            change_decay_init=self.config.change_temporal_update_decay,
+            completion_decay_init=self.config.completion_temporal_update_decay,
+            gameover_decay_init=self.config.gameover_temporal_update_decay,
+        ).to(self.device)
+
+        # Set to eval mode for inference
+        self.decision_model.eval()
+
+        # Reinitialize optimizer (clears Adam momentum/statistics)
+        self.optimizer = torch.optim.Adam(
+            self.decision_model.parameters(),
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay,
+        )
+
+        self.logger.info(
+            f"🔄 Reset model and optimizer for level {level} "
+            f"(reset_on_level_completion=True)"
+        )
+
     def _check_level_completion(self, latest_frame: FrameData) -> None | GameAction:
         # Check if score has changed and log score at action count
 
@@ -491,52 +542,9 @@ class Insula(Agent):
             self.current_score = latest_frame.score
             self.prev_frame_changes = 0
 
-            # Transfer Learning Strategy: Keep trained model by default
-            # Rationale: Game rules remain constant, ViT learns abstract spatial patterns
-            # that transfer across levels, Insula learns action semantics
-            #
-            # If observing overfitting or poor transfer, consider these options:
-
-            # OPTION 1: Reset only ViT encoder (relearn spatial patterns, keep Insula action knowledge)
-            # Pros: Adapts to new grid structures while preserving action semantics
-            # Cons: Loses learned spatial abstractions (symmetries, transformations)
-            # from insula_agent.models import ViTStateEncoder
-            # self.pure_dt_model.state_encoder = ViTStateEncoder(
-            #     cell_embed_dim=self.config.get("vit_cell_embed_dim", 64),
-            #     patch_size=self.config.get("vit_patch_size", 8),
-            #     num_layers=self.config.get("vit_num_layers", 4),
-            #     num_heads=self.config.get("vit_num_heads", 8),
-            #     dropout=self.config.get("vit_dropout", 0.1),
-            #     use_cls_token=self.config.get("vit_use_cls_token", True),
-            #     embed_dim=self.config["embed_dim"],
-            # ).to(self.device)
-            # # Re-register encoder parameters in optimizer
-            # self.optimizer = torch.optim.Adam(
-            #     self.pure_dt_model.parameters(),
-            #     lr=self.config["learning_rate"],
-            #     weight_decay=self.config["weight_decay"],
-            # )
-            # self.logger.info(f"🔄 Reset ViT encoder for level {latest_frame.score}")
-
-            # OPTION 2: Reduce learning rate (fine-tuning mode)
-            # Pros: Gentler adaptation to new level, preserves most learned knowledge
-            # Cons: May learn new patterns too slowly
-            # decay_factor = 0.5
-            # for param_group in self.optimizer.param_groups:
-            #     old_lr = param_group['lr']
-            #     param_group['lr'] *= decay_factor
-            #     self.logger.info(f"📉 Reduced learning rate: {old_lr:.6f} → {param_group['lr']:.6f}")
-
-            # OPTION 3: Reset optimizer state (clear momentum/Adam statistics)
-            # Pros: Removes optimization momentum from previous level's gradients
-            # Cons: Loses adaptive learning rate benefits
-            # self.optimizer = torch.optim.Adam(
-            #     self.pure_dt_model.parameters(),
-            #     lr=self.config["learning_rate"],
-            #     weight_decay=self.config["weight_decay"],
-            # )
-            # self.logger.info(f"🔄 Reset optimizer state for level {latest_frame.score}")
-
+            # Optionally reset model and optimizer (controlled by config)
+            if self.config.reset_on_level_completion:
+                self._reset_model_and_optimizer(latest_frame.score)
 
     def _store_experience(self, current_frame: torch.Tensor, latest_frame: FrameData):
         if self.prev_frame is not None:
@@ -636,6 +644,8 @@ class Insula(Agent):
             # Log inference context (debug level, only once on first inference)
             if self.action_counter == 1:
                 enabled_heads = ["change"]
+                if self.config.use_change_momentum_head:
+                    enabled_heads.append("change_momentum")
                 if self.config.use_completion_head:
                     enabled_heads.append("completion")
                 if self.config.use_gameover_head:
@@ -672,8 +682,10 @@ class Insula(Agent):
                 # Always get change logits (required)
                 change_logits = logits["change_logits"].squeeze(0)  # [4102]
 
-                # Always get change_momentum logits (required - always present with change head)
-                change_momentum_logits = logits["change_momentum_logits"].squeeze(0)  # [4102]
+                # Conditionally get change_momentum logits (optional)
+                change_momentum_logits = None
+                if "change_momentum_logits" in logits and logits["change_momentum_logits"] is not None:
+                    change_momentum_logits = logits["change_momentum_logits"].squeeze(0)  # [4102]
 
                 # Conditionally get completion logits (optional)
                 completion_logits = None
@@ -819,16 +831,17 @@ class Insula(Agent):
         # Start with change head probabilities (always present)
         probs_sampling = change_probs_sampling  # [4102]
 
-        # Multiply by change_momentum head probabilities (always present)
-        change_momentum_action_probs = torch.sigmoid(change_momentum_action_logits)  # [6]
-        change_momentum_coord_probs = torch.sigmoid(change_momentum_coord_logits)  # [4096]
-        change_momentum_coord_probs_scaled = change_momentum_coord_probs / self.num_coordinates
+        # Multiply by change_momentum head probabilities if available
+        if change_momentum_action_logits is not None:
+            change_momentum_action_probs = torch.sigmoid(change_momentum_action_logits)  # [6]
+            change_momentum_coord_probs = torch.sigmoid(change_momentum_coord_logits)  # [4096]
+            change_momentum_coord_probs_scaled = change_momentum_coord_probs / self.num_coordinates
 
-        change_momentum_probs_sampling = torch.cat([change_momentum_action_probs, change_momentum_coord_probs_scaled])  # [4102]
-        change_momentum_probs_sampling = change_momentum_probs_sampling / change_momentum_probs_sampling.sum()
+            change_momentum_probs_sampling = torch.cat([change_momentum_action_probs, change_momentum_coord_probs_scaled])  # [4102]
+            change_momentum_probs_sampling = change_momentum_probs_sampling / change_momentum_probs_sampling.sum()
 
-        # Multiplicative combination
-        probs_sampling = probs_sampling * change_momentum_probs_sampling  # [4102]
+            # Multiplicative combination
+            probs_sampling = probs_sampling * change_momentum_probs_sampling  # [4102]
 
         # Multiply by completion head probabilities if available
         if completion_action_logits is not None:
