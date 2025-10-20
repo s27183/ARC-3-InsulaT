@@ -64,7 +64,7 @@ class InsulaConfig:
     # Multi-Head Prediction Architecture
     # TODO: enable/disable learned heads for ablation studies
     use_change_head: bool = True  # Always True (change head is required)
-    use_momentum_head: bool = True # Always True (momentum head is required)
+    use_change_momentum_head: bool = True  # Predict change momentum (optional, for ablation studies)
     use_completion_head: bool = False  # Predict level completion (trajectory-level rewards)
     use_gameover_head: bool = False  # Predict GAME_OVER avoidance (trajectory-level rewards)
 
@@ -81,6 +81,11 @@ class InsulaConfig:
     # Training Schedule
     train_frequency: int = 5  # Train every N actions
     epochs_per_training: int = 1  # Number of epochs per training session
+
+    # Level Completion Behavior
+    reset_on_level_completion: bool = False  # Reset model/optimizer on level completion (ablation study)
+                                              # False (default): Transfer learning across levels
+                                              # True: Fresh start each level (independent learning)
 
     #
 
@@ -165,12 +170,8 @@ class InsulaConfig:
         if not self.use_change_head:
             raise ValueError("use_change_head must be True (change head is required)")
 
-        # Momentum head must always be enabled
-        if not self.use_momentum_head:
-            raise ValueError("use_momentum_head must be True (momentum head is required)")
-
         # At least one head must be enabled
-        if not (self.use_change_head or self.use_completion_head or self.use_gameover_head):
+        if not (self.use_change_head or self.use_change_momentum_head or self.use_completion_head or self.use_gameover_head):
             raise ValueError("At least one prediction head must be enabled")
 
         # Validate temporal decay rates (0, 1]
@@ -181,7 +182,7 @@ class InsulaConfig:
 
         if not (0 < self.change_momentum_temporal_update_decay <= 1.0):
             raise ValueError(
-                f"change_momentum_temporal_decay ({self.change_momentum_temporal_update_decay}) must be in (0, 1]"
+                f"change_momentum_temporal_update_decay ({self.change_momentum_temporal_update_decay}) must be in (0, 1]"
             )
 
         if not (0 < self.completion_temporal_update_decay <= 1.0):
