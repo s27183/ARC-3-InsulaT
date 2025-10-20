@@ -2,9 +2,9 @@
 
 **A basic Insula-inspired non-LLM system learning to play the ARC-3 games efficiently**
 
-AgentMoosh's goal is to create a starting point for empirically exploring approaches to developing Insula-inspired non-LLM systems that can learn to play the ARC-3 games efficiently.
+Agent Moosh's goal is to create a starting point for empirically exploring approaches to developing Insula-inspired non-LLM systems that can learn to play the ARC-3 games efficiently.
 
-Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](https://three.arcprize.org/leaderboard) in one of our ablation test runs. We look forward to having it verified on private games once the verification process is open again. It's likely that the leaderboard position will change as more competitive agents will join the game while we continue to develop the system and perform further ablation tests. 
+Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](https://three.arcprize.org/leaderboard) (see user `Son Tran`) in one of our test run configurations. We look forward to having it verified on private games once the verification process is open again. It's likely that the leaderboard position will change as more competitive agents will join the competition while we continue to develop the system and perform further experiments. 
 
 **Key Features:**
 
@@ -40,8 +40,8 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if not are
 1. Clone the arc-3-insula repo and enter the directory.
 
 ```bash
-git clone https://github.com/arcprize/ARC-AGI-3-Agents.git
-cd ARC-AGI-3-Agents
+git clone https://github.com/s27183/ARC-3-InsulaT
+cd ARC-3-InsulaT
 ```
 
 2. Copy .env.example to .env
