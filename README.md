@@ -25,11 +25,11 @@ Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](ht
 
 ## People
 
-Advisor: [Dan V. Nicolau](https://www.linkedin.com/in/dan-nicolau-384661219?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app)
+Advisor: <a href="https://www.linkedin.com/in/dan-nicolau-384661219?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app" target="_blank">Dan V. Nicolau</a>
 
-Support: Dang Huu Tai, Ngan Dinh, [Bang Dao](https://www.linkedin.com/in/daotranbang?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app), [Steve Bickley](https://www.linkedin.com/in/steve-bickley/), [David Nasonov](https://www.linkedin.com/in/david-nasonov-323767250?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app), [Aidan Saldanha](https://www.linkedin.com/in/aidandsaldanha?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app), [Panalogy Lab](https://panalogy-lab.com), Insular AI
+Support: Dang Huu Tai, Ngan Dinh, <a href="https://www.linkedin.com/in/daotranbang?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app" target="_blank">Bang Dao</a>, <a href="https://www.linkedin.com/in/steve-bickley/" target="_blank">Steve Bickley</a>, <a href="https://www.linkedin.com/in/david-nasonov-323767250?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app" target="_blank">David Nasonov</a>, <a href="https://www.linkedin.com/in/aidandsaldanha?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app" target="_blank">Aidan Saldanha</a>, <a href="https://panalogy-lab.com" target="_blank">Panalogy Lab</a>, Insular AI
 
-Author: [Son Tran](https://github.com/s27183)
+Lead author: <a href="https://github.com/s27183" target="_blank">Son Tran</a>
 
 ---
 
