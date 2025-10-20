@@ -1,10 +1,10 @@
 # Agent Moosh
 
-**A basic Insula-inspired non-LLM system learning to play the ARC-3 game efficiently**
+**A basic Insula-inspired non-LLM system learning to play the ARC-3 games efficiently**
 
 AgentMoosh's goal is to create a starting point for empirically exploring approaches to developing Insula-inspired non-LLM systems that can learn to play the ARC-3 games efficiently.
 
-Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](https://three.arcprize.org/leaderboard) in one of our ablation test runs. We look forward to having it verified on private games once the verification process is open again. 
+Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](https://three.arcprize.org/leaderboard) in one of our ablation test runs. We look forward to having it verified on private games once the verification process is open again. It's likely that the leaderboard position will change as more competitive agents will join the game while we continue to develop the system and perform further ablation tests. 
 
 **Key Features:**
 
@@ -13,9 +13,9 @@ Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](ht
   - **Hippocampal-inspired oversampling** with head-specific replay sizes prioritizing rare events (completion/gameover)
   - **Memory reconsolidation with reward revaluation** assigns trajectory-level rewards during replay without corrupting episodic memory
   - **Multiple prediction heads** for simultaneous learning of productivity (change), quality (momentum), goal completion, and safety (gameover avoidance)
-  - **Hierarchical action sampling** combining discrete actions (ACTION1-7) and coordinate-based actions via multiplicative probability combination
+  - **Hierarchical action sampling** combining all available discrete actions and coordinate-based actions via multiplicative probability combination
   - **Importance-weighted replay** prioritizes critical events
-  - **Online supervised learning** generates labels on-the-fly from game outcomes without reward engineering
+  - **Online supervised learning** generates labels on-the-fly from game outcomes
   - **Hierarchical temporal weighting** via head-specific decay rates creating multi-timescale learning
   - **Attention as neural integration** implementing biological integration principles through transformer operations
   - **Configurable transfer learning** with optional model/optimizer reset on level completion for ablation studies
