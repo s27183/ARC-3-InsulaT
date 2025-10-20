@@ -1,27 +1,33 @@
-# ARC-3 Insula Agent
+# InsulaT
 
-**Insula-inspired agent combining visual and decision transformers:**
+**A basic Insula-inspired non-LLM system learning to play the ARC-3 game efficiently**
 
-## Key Features:
+InsulaT's goal is to create starting point for empirically exploring approaches to developing Insula-inspired systems that can learn to play the ARC-3 games efficiently.
 
+**Key Features:**
 
-  - Online supervised learning with ViT + Decision Transformer backbone and hierarchical prediction heads
-  - Spatial-temporal integration encodes game state and action dynamics through multi-level attention
-  - Configurable hierarchical temporal contexts match biological timescales: immediate feedback (e.g. 5 steps), goal sequences (e.g. 20 steps), and failure chains (e.g. 40 steps)
-  - Configurable multi-head prediction learns multiple objectives simultaneously (productivity, goal completion, safety) over different temporal horizons
-  - Configurable temporal hindsight tracing with learnable decay rates re-evaluates past decisions with present knowledge
-  - Importance-weighted replay prioritizes critical events (1:5:10 ratio for
-  change:completion:failure), mirroring hippocampal memory consolidation
+  - **Insula-inspired multi-level integration** via Vision Transformer (ViT) and Decision Transformer (DT) for spatial-temporal processing
+  - **Multi-timestep forward prediction** trains on all timesteps in sequence (past + present) for sample efficiency
+  - **Hippocampal-inspired oversampling** with head-specific replay sizes prioritizing rare events (completion/gameover)
+  - **Memory reconsolidation with reward revaluation** assigns trajectory-level rewards during replay without corrupting episodic memory
+  - **Multiple prediction heads** for simultaneous learning of productivity (change), quality (momentum), goal completion, and safety (gameover avoidance)
+  - **Hierarchical action sampling** combining discrete actions (ACTION1-7) and coordinate-based actions via multiplicative probability combination
+  - **Importance-weighted replay** prioritizes critical events matching hippocampal memory consolidation
+  - **Online supervised learning** generates labels on-the-fly from game outcomes without reward engineering
+  - **Hierarchical temporal weighting** via head-specific decay rates creating multi-timescale learning (5/10/20 action focus windows)
+  - **Attention as neural integration** implementing biological integration principles through transformer layers
+  - **Configurable transfer learning** with optional model/optimizer reset on level completion for ablation studies
 
 ---
 
-## People
+## Team
 
-**Advisor**: [Dan V. Nicolau]()
+Advisor: [Dan V. Nicolau]()
 
-**Supporters**: Dang Huu Tai, [Panalogy Lab]()
+Support: Dang Huu Tai, Ngan Dinh, Bang Dao, Steve Bickley, Aidan, David, [Panalogy Lab](), Insular AI
 
-**Author**: [Son Tran]()
+Author: [Son Tran]()
+
 
 
 
