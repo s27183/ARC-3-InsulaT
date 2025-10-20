@@ -70,7 +70,7 @@ unset VIRTUAL_ENV
 5. Run the agent
 
 ```bash
-uv run main.py --agent=insula
+uv run main.py --agent=insulat
 ```
 
 6. View tensorboard logs
