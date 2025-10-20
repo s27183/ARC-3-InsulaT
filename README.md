@@ -1,13 +1,13 @@
 # Agent Moosh
 
-**A basic Insula-inspired non-LLM system learning to play the ARC-3 games efficiently**
+**A basic Insula-inspired non-LLM system learning to play the ARC-AGI-3 games efficiently**
 
 Agent Moosh's goal is to create a starting point for empirically exploring approaches to developing Insula-inspired non-LLM systems that can learn to play the ARC-3 games efficiently.
 
-Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](https://three.arcprize.org/leaderboard) (see user `Son Tran`) in one of our test run configurations. We look forward to having it verified on private games once the verification process is open again. It's likely that the leaderboard position will change as more competitive agents will join the competition while we continue to develop the system and perform further experiments. 
+Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](https://three.arcprize.org/leaderboard) in one of our test run configurations. We look forward to having it verified on private games once the verification process is open again. It's likely that the leaderboard position will change as more competitive agents will join the competition while we continue to develop the system and perform further experiments. 
 
 **Key Features:**
-
+https://www.linkedin.com/in/dan-nicolau-384661219?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app
   - **Insula-inspired multi-level integration** via Vision Transformer (ViT) and Decision Transformer (DT) for spatial-temporal processing
   - **Multi-timestep forward prediction** trains on all timesteps in sequence (past + present) for sample efficiency
   - **Hippocampal-inspired oversampling** with head-specific replay sizes prioritizing rare events (completion/gameover)
@@ -25,7 +25,7 @@ Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](ht
 
 ## People
 
-Advisor: [Dan V. Nicolau]()
+Advisor: [Dan V. Nicolau](https://www.linkedin.com/in/dan-nicolau-384661219?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app)
 
 Support: Dang Huu Tai, Ngan Dinh, [Bang Dao](https://www.linkedin.com/in/daotranbang?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app), [Steve Bickley](https://www.linkedin.com/in/steve-bickley/), [David Nasonov](https://www.linkedin.com/in/david-nasonov-323767250?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app), [Aidan Saldanha](https://www.linkedin.com/in/aidandsaldanha?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app), [Panalogy Lab](https://panalogy-lab.com), Insular AI
 
