@@ -384,6 +384,7 @@ class DecisionModel(nn.Module):
         vit_pos_dim_ratio=0.5,  # Cell position encoding dimension ratio
         vit_use_patch_pos_encoding=False,  # Whether to use patch-level positional encoding
         # Head configuration
+        use_change_momentum_head=True,  # Whether to use change momentum prediction head
         use_completion_head=True,  # Whether to use completion prediction head
         use_gameover_head=True,    # Whether to use GAME_OVER prediction head
         # Learned decay configuration
@@ -395,6 +396,7 @@ class DecisionModel(nn.Module):
     ):
         super().__init__()
 
+        self.use_change_momentum_head = use_change_momentum_head
         self.use_completion_head = use_completion_head
         self.use_gameover_head = use_gameover_head
 
@@ -405,15 +407,21 @@ class DecisionModel(nn.Module):
         if use_learned_decay:
             # Learnable parameters (optimized by gradient descent)
             self.change_decay_param = nn.Parameter(torch.tensor(change_decay_init))
-            self.change_momentum_decay_param = nn.Parameter(torch.tensor(change_momentum_decay_init))
-            self.completion_decay_param = nn.Parameter(torch.tensor(completion_decay_init))
-            self.gameover_decay_param = nn.Parameter(torch.tensor(gameover_decay_init))
+            if use_change_momentum_head:
+                self.change_momentum_decay_param = nn.Parameter(torch.tensor(change_momentum_decay_init))
+            if use_completion_head:
+                self.completion_decay_param = nn.Parameter(torch.tensor(completion_decay_init))
+            if use_gameover_head:
+                self.gameover_decay_param = nn.Parameter(torch.tensor(gameover_decay_init))
         else:
             # Fixed buffers (saved with checkpoint but not optimized)
             self.register_buffer('change_decay_param', torch.tensor(change_decay_init))
-            self.register_buffer('change_momentum_decay_param', torch.tensor(change_momentum_decay_init))
-            self.register_buffer('completion_decay_param', torch.tensor(completion_decay_init))
-            self.register_buffer('gameover_decay_param', torch.tensor(gameover_decay_init))
+            if use_change_momentum_head:
+                self.register_buffer('change_momentum_decay_param', torch.tensor(change_momentum_decay_init))
+            if use_completion_head:
+                self.register_buffer('completion_decay_param', torch.tensor(completion_decay_init))
+            if use_gameover_head:
+                self.register_buffer('gameover_decay_param', torch.tensor(gameover_decay_init))
 
         # Component modules - Use ViT State Encoder with insular-inspired cell integration
         self.state_encoder = ViTStateEncoder(
@@ -466,25 +474,27 @@ class DecisionModel(nn.Module):
             nn.Linear(embed_dim // 2, 4096),  # 64x64 coordinates
         )
 
-        # Change momentum head: predicts P(action causes MORE change than recent actions)
-        # Learns to identify actions that build momentum toward impactful pattern completion
-        # Reward semantics:
-        #   - 1.0: Action changed MORE cells than previous action (momentum building)
-        #   - 0.0: Action changed FEWER/EQUAL cells (momentum lost/maintained)
-        self.change_momentum_head = nn.Sequential(
-                nn.LayerNorm(embed_dim),
-                nn.Linear(embed_dim, embed_dim // 2),
-                nn.GELU(),
-                nn.Dropout(0.1),
-                nn.Linear(embed_dim // 2, 6), # ACTION1-5, ACTION7
-        )
-        self.change_momentum_coord_head = nn.Sequential(
-                nn.LayerNorm(embed_dim),
-                nn.Linear(embed_dim, embed_dim // 2),
-                nn.GELU(),
-                nn.Dropout(0.1),
-                nn.Linear(embed_dim // 2, 4096),
-        )
+        # Change momentum head (optional: predict change momentum)
+        if self.use_change_momentum_head:
+            # Predicts P(action causes MORE change than recent actions)
+            # Learns to identify actions that build momentum toward impactful pattern completion
+            # Reward semantics:
+            #   - 1.0: Action changed MORE cells than previous action (momentum building)
+            #   - 0.0: Action changed FEWER/EQUAL cells (momentum lost/maintained)
+            self.change_momentum_head = nn.Sequential(
+                    nn.LayerNorm(embed_dim),
+                    nn.Linear(embed_dim, embed_dim // 2),
+                    nn.GELU(),
+                    nn.Dropout(0.1),
+                    nn.Linear(embed_dim // 2, 6), # ACTION1-5, ACTION7
+            )
+            self.change_momentum_coord_head = nn.Sequential(
+                    nn.LayerNorm(embed_dim),
+                    nn.Linear(embed_dim, embed_dim // 2),
+                    nn.GELU(),
+                    nn.Dropout(0.1),
+                    nn.Linear(embed_dim // 2, 4096),
+            )
 
         # Completion head (optional: predict level completion)
         if self.use_completion_head:
@@ -615,18 +625,21 @@ class DecisionModel(nn.Module):
                     [change_action_logits, change_coord_logits], dim=2
                 )  # [batch, seq_len+1, 4102] - concat on dim=2 for 3D tensors
 
-                change_momentum_action_logits = self.change_momentum_head(
-                        state_reprs
-                ) # [batch, seq_len+1, 6]
-                change_momentum_coord_logits = self.change_momentum_coord_head(
-                        state_reprs
-                ) # [batch, seq_len+1, 4096]
-                change_momentum_logits = torch.cat(
-                    [change_momentum_action_logits, change_momentum_coord_logits], dim=2
-                )  # [batch, seq_len+1, 4102] - concat on dim=2 for 3D tensors
+                # Change momentum head (optional)
+                if self.use_change_momentum_head:
+                    change_momentum_action_logits = self.change_momentum_head(
+                            state_reprs
+                    ) # [batch, seq_len+1, 6]
+                    change_momentum_coord_logits = self.change_momentum_coord_head(
+                            state_reprs
+                    ) # [batch, seq_len+1, 4096]
+                    change_momentum_logits = torch.cat(
+                        [change_momentum_action_logits, change_momentum_coord_logits], dim=2
+                    )  # [batch, seq_len+1, 4102] - concat on dim=2 for 3D tensors
+                else:
+                    change_momentum_logits = None
 
-
-                # Build output dict - always include change logits and change momentum logits
+                # Build output dict - always include change logits
                 output = {
                         "change_logits": change_logits,
                         "change_momentum_logits": change_momentum_logits,
@@ -676,18 +689,21 @@ class DecisionModel(nn.Module):
                     [change_action_logits, change_coord_logits], dim=1
                 )  # [batch, 4102] - concat on dim=1 for 2D tensors
 
-                # Change momentum head
-                change_momentum_action_logits = self.change_momentum_head(
-                        final_repr
-                ) # [batch, 6]
-                change_momentum_coord_logits = self.change_momentum_coord_head(
-                        final_repr
-                ) # [batch, 4096]
-                change_momentum_logits = torch.cat(
-                    [change_momentum_action_logits, change_momentum_coord_logits], dim=1
-                )
+                # Change momentum head (optional)
+                if self.use_change_momentum_head:
+                    change_momentum_action_logits = self.change_momentum_head(
+                            final_repr
+                    ) # [batch, 6]
+                    change_momentum_coord_logits = self.change_momentum_coord_head(
+                            final_repr
+                    ) # [batch, 4096]
+                    change_momentum_logits = torch.cat(
+                        [change_momentum_action_logits, change_momentum_coord_logits], dim=1
+                    )
+                else:
+                    change_momentum_logits = None
 
-                # Build output dict - always include change logits and change momentum logits
+                # Build output dict - always include change logits
                 output = {
                         "change_logits": change_logits,
                         "change_momentum_logits": change_momentum_logits
@@ -737,18 +753,21 @@ class DecisionModel(nn.Module):
                 [change_action_logits, change_coord_logits], dim=1
             )  # [batch, 4102] - concat on dim=1 for 2D tensors
 
-            # Change momentum head
-            change_momentum_action_logits = self.change_momentum_head(
-                    final_repr
-            ) # [batch, 6] - ACTION1-5, ACTION7
-            change_momentum_coord_logits = self.change_momentum_coord_head(
-                    final_repr
-            ) # [batch, 4096] - coordinates
-            change_momentum_logits = torch.cat(
-                [change_momentum_action_logits, change_momentum_coord_logits], dim=1
-            ) # [batch, 4102] - concat on dim=1 for 2D tensors
+            # Change momentum head (optional)
+            if self.use_change_momentum_head:
+                change_momentum_action_logits = self.change_momentum_head(
+                        final_repr
+                ) # [batch, 6] - ACTION1-5, ACTION7
+                change_momentum_coord_logits = self.change_momentum_coord_head(
+                        final_repr
+                ) # [batch, 4096] - coordinates
+                change_momentum_logits = torch.cat(
+                    [change_momentum_action_logits, change_momentum_coord_logits], dim=1
+                ) # [batch, 4102] - concat on dim=1 for 2D tensors
+            else:
+                change_momentum_logits = None
 
-            # Build output dict - always include change logits and change momentum logits
+            # Build output dict - always include change logits
             output = {
                     "change_logits": change_logits,
                     "change_momentum_logits": change_momentum_logits
