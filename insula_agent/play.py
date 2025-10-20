@@ -55,7 +55,7 @@ from insula_agent.models import DecisionModel
 from insula_agent.trainer import train_model
 from insula_agent.utils import setup_logging
 
-class Insula(Agent):
+class InsulaT(Agent):
     """Insula agent for ARC-AGI-3.
 
     Online supervised learning agent with insular cortex-inspired multi-level integration.
@@ -722,7 +722,7 @@ class Insula(Agent):
     def _sample_action(
         self,
         change_logits: torch.Tensor,
-        change_momentum_logits: torch.Tensor,  # Always present (required head)
+        change_momentum_logits: None | torch.Tensor,  # Always present (required head)
         completion_logits: None | torch.Tensor ,  # Can be None if head disabled
         gameover_logits: None | torch.Tensor ,    # Can be None if head disabled
         available_actions=None,
@@ -755,8 +755,12 @@ class Insula(Agent):
         change_coord_logits = change_logits[6:]  # [4096]
 
         # Split change_momentum logits (always present)
-        change_momentum_action_logits = change_momentum_logits[:6]  # [6] - includes ACTION7
-        change_momentum_coord_logits = change_momentum_logits[6:]  # [4096]
+        if change_momentum_logits is not None:
+            change_momentum_action_logits = change_momentum_logits[:6]  # [6] - includes ACTION7
+            change_momentum_coord_logits = change_momentum_logits[6:]  # [4096]
+        else:
+            change_momentum_action_logits = None
+            change_momentum_coord_logits = None
 
         # Split completion logits if present
         if completion_logits is not None:
@@ -795,7 +799,8 @@ class Insula(Agent):
             change_action_logits = change_action_logits + action_mask
 
             # Apply mask to change_momentum head (always present)
-            change_momentum_action_logits = change_momentum_action_logits + action_mask
+            if change_momentum_action_logits is not None:
+                change_momentum_action_logits = change_momentum_action_logits + action_mask
 
             # Apply mask to completion head if present
             if completion_action_logits is not None:
@@ -809,7 +814,9 @@ class Insula(Agent):
             if not action6_available:
                 coord_mask = torch.full_like(change_coord_logits, float("-inf"))
                 change_coord_logits = change_coord_logits + coord_mask
-                change_momentum_coord_logits = change_momentum_coord_logits + coord_mask
+
+                if change_momentum_coord_logits is not None:
+                    change_momentum_coord_logits = change_momentum_coord_logits + coord_mask
 
                 if completion_coord_logits is not None:
                     completion_coord_logits = completion_coord_logits + coord_mask
