@@ -591,10 +591,11 @@ def train_model(
     # === STEP 2: Direct batching (all sequences same length) ===
     # With unified context_len, all sequences have same length → no grouping needed
     # Simply count how many batches we'll process (1 per head if sequences exist)
-    # Note: change and momentum share sequences, so count as 2 batches if change_sequences exist
-    num_batches = (2 if change_sequences else 0) + \
-                  (1 if completion_sequences else 0) + \
-                  (1 if gameover_sequences else 0)
+    # Note: change and momentum share sequences, so count 1 or 2 batches if change_sequences exist (depending on use_change_momentum_head)
+    num_batches = (1 if change_sequences else 0) + \
+                  (1 if config.use_change_momentum_head and change_sequences else 0) + \
+                  (1 if config.use_completion_head and completion_sequences else 0) + \
+                  (1 if config.use_gameover_head and gameover_sequences else 0)
 
     # Log training info
     logger.info(
@@ -627,8 +628,8 @@ def train_model(
             accumulated_metrics["change_loss"] += metrics["loss"]
             accumulated_metrics["num_batches"] += 1
 
-        # === STEP 5: Process change_momentum head (reuses change sequences) ===
-        if change_sequences:
+        # === STEP 5: Process change_momentum head (if enabled, reuses change sequences) ===
+        if config.use_change_momentum_head and change_sequences:
             loss, metrics = train_head_batch(
                 model, change_sequences, head_type="change_momentum", config=config, device=device
             )
@@ -731,9 +732,10 @@ def log_hierarchical_dt_metrics(
     if metrics.get("change_loss", 0) > 0:
         writer.add_scalar("InsulaAgent/change_loss", metrics["change_loss"], action_counter)
 
-    # Always log change_momentum loss (required head)
-    if metrics.get("change_momentum_loss", 0) > 0:
-        writer.add_scalar("InsulaAgent/change_momentum_loss", metrics["change_momentum_loss"], action_counter)
+    # Only log change_momentum loss if momentum head is enabled
+    if config and config.use_change_momentum_head:
+        if metrics.get("change_momentum_loss", 0) > 0:
+            writer.add_scalar("InsulaAgent/change_momentum_loss", metrics["change_momentum_loss"], action_counter)
 
     # Only log completion loss if completion head is enabled
     if config and config.use_completion_head:
