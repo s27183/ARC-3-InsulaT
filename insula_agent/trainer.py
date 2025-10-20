@@ -180,48 +180,50 @@ def create_change_seqs(
     Samples WITHOUT replacement within batch to maximize diversity and reduce
     gradient correlation. Falls back to WITH replacement if buffer is small.
 
+    Supports adaptive context length: uses min(context_len, buffer_len - 1) for
+    early training when buffer is small.
+
     Args:
         experience_buffer: Deque of experience dictionaries
         config: Configuration dictionary with:
             - "change_replay_size": int (default 16)
-            - "context_len": int (default 25, unified for all heads)
+            - "context_len": int (default 50, maximum context length)
 
     Returns:
-        List of sequence dictionaries, all with length context_len.
-        Returns empty list if buffer too small.
+        List of sequence dictionaries with adaptive length.
+        Returns empty list if buffer too small (< 2 experiences).
     """
     replay_size = config.change_replay_size
-    context_len = config.context_len  # Unified context length
+    context_len = config.context_len  # Maximum context length
     buffer_len = len(experience_buffer)
 
-    # Need at least context_len + 1 experiences (k past actions + 1 current state)
-    if buffer_len < context_len + 1:
+    # Need at least 2 experiences (1 transition: s0, a0, s1)
+    if buffer_len < 2:
         return []
 
-    # Calculate possible start positions
-    max_start_idx = buffer_len - context_len - 1
+    # Adaptive context: use available buffer size if smaller than context_len
+    # Early training: buffer_len=5 → actual_context_len=4 (4 actions + 5 states)
+    # Late training: buffer_len=100 → actual_context_len=50 (capped at context_len)
+    actual_context_len = min(context_len, buffer_len - 1)
+
+    # Calculate possible start positions using actual_context_len
+    max_start_idx = buffer_len - actual_context_len - 1
     num_possible_starts = max_start_idx + 1
 
-    # Sample start indices using NumPy for clarity and consistency
-    if num_possible_starts >= replay_size:
-        # Sufficient diversity → sample WITHOUT replacement (no duplicates)
-        sampled_starts = np.random.choice(
-            num_possible_starts,
-            size=replay_size,
-            replace=False  # Ensure unique sequences within batch
-        )
-    else:
-        # Limited diversity → sample WITH replacement (allow duplicates)
-        # This happens early in the game when buffer is small
-        sampled_starts = np.random.choice(
-            num_possible_starts,
-            size=replay_size,
-            replace=True
-        )
+    # Adaptive batch size: use min(replay_size, num_possible_starts)
+    # Honest learning - no oversampling for change sequences
+    # Early game: Small batches (1-10 sequences)
+    # Late game: Full batches (128 sequences)
+    effective_batch_size = min(replay_size, num_possible_starts)
+    sampled_starts = np.random.choice(
+        num_possible_starts,
+        size=effective_batch_size,
+        replace=False  # Always sample without replacement
+    )
 
     sequences = []
     for start_idx in sampled_starts:
-        sequence = extract_sequence(experience_buffer, int(start_idx), context_len)
+        sequence = extract_sequence(experience_buffer, int(start_idx), actual_context_len)
         # Apply trajectory reward revaluation (memory reconsolidation)
         sequence = apply_trajectory_rewards(sequence, config)
         sequences.append(sequence)
@@ -237,20 +239,23 @@ def create_completion_seqs(
     experience_buffer: deque,
     config: InsulaConfig,
 ) -> list[dict[str, torch.Tensor]]:
-    """Create completion sequences: outcome-anchored, unified context length.
+    """Create completion sequences: outcome-anchored, adaptive context length.
+
+    Supports adaptive context length: sequences ending at completion events use
+    min(context_len, event_idx) to handle early game completions.
 
     Args:
         experience_buffer: Deque of experience dictionaries
         config: Configuration dictionary with:
-            - "completion_replay_size": int (default 160)
-            - "context_len": int (default 25, unified for all heads)
+            - "completion_replay_size": int (default 128)
+            - "context_len": int (default 50, maximum context length)
 
     Returns:
-        List of sequence dictionaries with length context_len.
+        List of sequence dictionaries with adaptive length.
         Returns empty list if no completion events found.
     """
     replay_size = config.completion_replay_size
-    context_len = config.context_len  # Unified context length (no variation)
+    context_len = config.context_len  # Maximum context length
 
     # Find all completion events in buffer
     completion_idx = [
@@ -261,9 +266,12 @@ def create_completion_seqs(
     if not completion_idx:
         return []  # No completion events yet
 
-    # Determine sampling strategy: WITH or WITHOUT replacement
+    # KEEP WITH replacement for completion sequences (intentional oversampling)
+    # Rationale: Buffer is CLEARED after level completion, so this is the ONLY
+    # chance to learn from success. Oversampling ensures strong gradient signal
+    # for this rare, critical event before it's lost forever.
     if len(completion_idx) < replay_size:
-        # SPARSE: Sample WITH replacement (oversample)
+        # SPARSE: Sample WITH replacement (oversample the rare success)
         sampled_indices = np.random.choice(completion_idx, size=replay_size, replace=True)
     else:
         # ABUNDANT: Sample WITHOUT replacement (subsample)
@@ -271,7 +279,8 @@ def create_completion_seqs(
 
     sequences = []
     for completion_idx in sampled_indices:
-        # Use fixed context_len (no variation)
+        # Adaptive context: use min(context_len, completion_idx) to handle early completions
+        # Example: completion at index 3 → actual_context_len=3 (can't use full context_len=50)
         actual_context_len = min(context_len, completion_idx)  # Can't go before buffer start
 
         # Extract sequence ENDING at completion_idx
@@ -288,20 +297,23 @@ def create_gameover_seqs(
     experience_buffer: deque,
     config: InsulaConfig,
 ) -> list[dict[str, torch.Tensor]]:
-    """Create GAME_OVER sequences: outcome-anchored, unified context length.
+    """Create GAME_OVER sequences: outcome-anchored, adaptive context length.
+
+    Supports adaptive context length: sequences ending at GAME_OVER events use
+    min(context_len, event_idx) to handle early game failures.
 
     Args:
         experience_buffer: Deque of experience dictionaries
         config: Configuration dictionary with:
-            - "gameover_replay_size": int (default 16)
-            - "context_len": int (default 25, unified for all heads)
+            - "gameover_replay_size": int (default 128)
+            - "context_len": int (default 50, maximum context length)
 
     Returns:
-        List of sequence dictionaries with length context_len.
+        List of sequence dictionaries with adaptive length.
         Returns empty list if no GAME_OVER events found.
     """
     replay_size = config.gameover_replay_size
-    context_len = config.context_len  # Unified context length (no variation)
+    context_len = config.context_len  # Maximum context length
 
     # Find all GAME_OVER events in buffer (gameover_reward == 0.0 means GAME_OVER occurred)
     gameover_idx = [
@@ -312,17 +324,20 @@ def create_gameover_seqs(
     if not gameover_idx:
         return []  # No GAME_OVER events yet
 
-    # Determine sampling strategy: WITH or WITHOUT replacement
-    if len(gameover_idx) < replay_size:
-        # SPARSE: Sample WITH replacement (oversample)
-        sampled_indices = np.random.choice(gameover_idx, size=replay_size, replace=True)
-    else:
-        # ABUNDANT: Sample WITHOUT replacement (subsample)
-        sampled_indices = np.random.choice(gameover_idx, size=replay_size, replace=False)
+    # Adaptive batch size: use min(replay_size, num_gameover_events)
+    # Honest learning - no oversampling for gameover sequences
+    # Buffer persists within level, diversity grows naturally
+    effective_batch_size = min(replay_size, len(gameover_idx))
+    sampled_indices = np.random.choice(
+        gameover_idx,
+        size=effective_batch_size,
+        replace=False  # Always sample without replacement
+    )
 
     sequences = []
     for gameover_idx in sampled_indices:
-        # Use fixed context_len (no variation)
+        # Adaptive context: use min(context_len, gameover_idx) to handle early failures
+        # Example: GAME_OVER at index 2 → actual_context_len=2 (can't use full context_len=50)
         actual_context_len = min(context_len, gameover_idx)  # Can't go before buffer start
 
         # Extract sequence ENDING at gameover_idx
