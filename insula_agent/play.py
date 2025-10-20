@@ -380,7 +380,7 @@ class Insula(Agent):
         # Train the model
         if self._should_train_model(latest_frame):
             buffer_size = len(self.experience_buffer)
-            if buffer_size >= self.config.context_len:
+            if buffer_size >= self.config.train_frequency:
                 self.logger.info(
                     f"🤖 Training Insula model. Game: {self.game_id} with (buffer size: {buffer_size})"
                 )
@@ -397,7 +397,7 @@ class Insula(Agent):
                 )
             else:
                 self.logger.debug(
-                    f"Skipping training: buffer size {buffer_size} < context length {self.config.context_len}"
+                    f"Skipping training: buffer size {buffer_size} < train_frequency {self.config.train_frequency}"
                 )
 
         # Check level completion
