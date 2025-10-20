@@ -13,7 +13,7 @@ from insula_agent.config import (
     gpu_config,
 )
 
-from insula_agent.play import Insula
+from insula_agent.play import InsulaT
 
 __all__ = [
     # Configuration
@@ -23,5 +23,5 @@ __all__ = [
     "cpu_config",
     "gpu_config",
     # Model
-    "Insula",
+    "InsulaT",
 ]
