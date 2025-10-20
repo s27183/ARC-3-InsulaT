@@ -49,7 +49,7 @@ class InsulaConfig:
     # - Hierarchical focus windows (5/10/20 actions) maintained via decay rates
     # - Efficient with modern transformers (101 tokens = 2×50+1)
     # - Allows gameover head to see full failure causality across extended episodes
-    context_len: int = 50
+    context_len: int = 5
 
     # ViT State Encoder (Spatial Processing)
     vit_patch_size: int = 8  # Default Patch size (8×8 = 64 patches for 64×64 grid) - will be replaced by dynamic patch size per game
@@ -65,8 +65,8 @@ class InsulaConfig:
     # TODO: enable/disable learned heads for ablation studies
     use_change_head: bool = True  # Always True (change head is required)
     use_momentum_head: bool = True # Always True (momentum head is required)
-    use_completion_head: bool = True  # Predict level completion (trajectory-level rewards)
-    use_gameover_head: bool = True  # Predict GAME_OVER avoidance (trajectory-level rewards)
+    use_completion_head: bool = False  # Predict level completion (trajectory-level rewards)
+    use_gameover_head: bool = False  # Predict GAME_OVER avoidance (trajectory-level rewards)
 
     # ============================================================================
     # TRAINING CONFIGURATION
@@ -121,8 +121,8 @@ class InsulaConfig:
     # - γ closer to 0: Strong recency bias (focus on recent actions)
     # - γ closer to 1: Weak recency bias (nearly uniform weighting)
     # Computed to concentrate 80% of weight on target window for context_len=50
-    change_temporal_update_decay: float = 0.5  # Focus on recent 3 actions (immediate effects)
-    change_momentum_temporal_update_decay: float = 0.5  # Focus on recent 3 actions (same as change)
+    change_temporal_update_decay: float = 1.0  # Focus on recent 3 actions (immediate effects)
+    change_momentum_temporal_update_decay: float = 1.0  # Focus on recent 3 actions (same as change)
     completion_temporal_update_decay: float = 0.95  # Focus on recent 20 actions (medium-term planning)
     gameover_temporal_update_decay: float = 0.85  # Focus on recent 10 actions (long-term causality)
 
@@ -227,7 +227,7 @@ def cpu_config() -> InsulaConfig:
         embed_dim=128,
         num_layers=2,
         num_heads=4,  # 128/4 = 32
-        context_len=25,  # Shorter context for CPU (faster development/testing)
+        context_len=5,  # Shorter context for CPU (faster development/testing)
         # Smaller ViT for CPU
         vit_num_layers=2,
         vit_num_heads=4,
@@ -249,26 +249,27 @@ def gpu_config() -> InsulaConfig:
     Balanced scaling for context_len=50:
     - 2x longer context (50 vs 25 steps)
     - 2.3x model capacity (24M vs 11M parameters)
-    - 2x batch sizes for stability
-    - Memory usage: ~0.6-0.8 GB (only 1% of H100's 80GB)
+    - Reduced batch sizes to avoid OOM (32-64 vs 128)
+    - Memory usage: ~40-60 GB during training (with gradients + activations)
 
     Returns:
         InsulaConfig optimized for H100 GPU training
     """
     return InsulaConfig(
         # Scaled Transformer architecture (H100-optimized)
-        embed_dim=384,              # 256 → 384 (1.5x capacity)
-        num_layers=6,               # 4 → 6 (deeper reasoning)
-        num_heads=12,               # 8 → 12 (more attention patterns)
-        context_len=50,             # 25 → 50 (2x longer context)
+        embed_dim=256,              # 256 → 384 (1.5x capacity)
+        num_layers=4,               # 4 → 6 (deeper reasoning)
+        num_heads=8,               # 8 → 12 (more attention patterns)
+        context_len=5,             # 25 → 50 (2x longer context)
         # ViT architecture (keep same - spatial is already good)
         vit_num_layers=4,
         vit_num_heads=8,
         vit_cell_embed_dim=64,
-        # Increased replay sizes (2x for stability)
-        change_replay_size=128,     # 64 → 128 (more stable gradients)
-        completion_replay_size=128, # 64 → 128
-        gameover_replay_size=128,   # 64 → 128
+        # Balanced replay sizes for H100 memory constraints
+        # With context_len=50 (101 tokens), batch_size=128 causes OOM
+        change_replay_size=64,      # Adaptive batch rarely hits this anyway
+        completion_replay_size=64,  # Key: 32x oversampling still strong signal
+        gameover_replay_size=64,    # Adaptive batch rarely hits this anyway
         # Decay rates optimized for context_len=50
         change_temporal_update_decay=0.5,          # Focus on recent 5 actions
         change_momentum_temporal_update_decay=0.5, # Focus on recent 5 actions
