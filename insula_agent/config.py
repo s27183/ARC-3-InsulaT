@@ -49,6 +49,8 @@ class InsulaConfig:
     # - Hierarchical focus windows (5/10/20 actions) maintained via decay rates
     # - Efficient with modern transformers (101 tokens = 2×50+1)
     # - Allows gameover head to see full failure causality across extended episodes
+    # - WARNING: estimate carefully the compute needed for context_len=50 together with the gpu configs below
+    # TODO: explore hierarchical context lengths for different heads. This requires new model architecture to handle temporal inconsistency in position embeddings.
     context_len: int = 5
 
     # ViT State Encoder (Spatial Processing)
@@ -62,9 +64,9 @@ class InsulaConfig:
     vit_use_patch_pos_encoding: bool = False  # Patch-level positional encoding
 
     # Multi-Head Prediction Architecture
-    # TODO: enable/disable learned heads for ablation studies
+    # Enable/disable learned heads for ablation studies
     use_change_head: bool = True  # Always True (change head is required)
-    use_change_momentum_head: bool = True  # Predict change momentum (optional, for ablation studies)
+    use_change_momentum_head: bool = False  # Predict change momentum (optional, for ablation studies)
     use_completion_head: bool = False  # Predict level completion (trajectory-level rewards)
     use_gameover_head: bool = False  # Predict GAME_OVER avoidance (trajectory-level rewards)
 
@@ -83,8 +85,8 @@ class InsulaConfig:
     epochs_per_training: int = 1  # Number of epochs per training session
 
     # Level Completion Behavior
-    reset_on_level_completion: bool = False  # Reset model/optimizer on level completion (ablation study)
-                                              # False (default): Transfer learning across levels
+    reset_on_level_completion: bool = True  # Reset model/optimizer on level completion (ablation study)
+                                              # False (default): Transfer learning across levels?
                                               # True: Fresh start each level (independent learning)
 
     #
@@ -97,6 +99,7 @@ class InsulaConfig:
     # When True: Model predicts at ALL states in sequence (PAST + PRESENT forward predictions)
     # When False: Model predicts only at final state (PRESENT forward prediction only)
     # Recommendation: True (provides k+1 training signals per sequence, improves representations)
+    # Enable/disable temporal update for ablation studies
     temporal_update: bool = True
 
     # Temporal Weighting (ONLY used when temporal_update=True)
@@ -119,6 +122,7 @@ class InsulaConfig:
     #
     # Memory Reconsolidation: Buffer stores action-level rewards, replay assigns
     # trajectory-level rewards (matches hippocampal replay + dopamine modulation)
+    # Enable/disable temporal decay rates for ablation studies
     use_learned_decay: bool = False  # Learn decay rates during training (experimental)
 
     # Hierarchical Temporal Decay Rates (Optimized for Multi-Timescale Learning)
@@ -147,6 +151,7 @@ class InsulaConfig:
     use_trajectory_rewards: bool = True  # Enable reward revaluation during replay
 
     # Head-Specific Replay Sizes (Importance-Weighted Sampling)
+    # Note: these options will be overridden by cpu_config() and gpu_config()
     change_replay_size: int = 8  # Change is frequent → small batch (shared with momentum head)
     # Note: change_momentum_replay_size removed - momentum head shares change_replay_size
     completion_replay_size: int = 8  # Completion is rare → large batch

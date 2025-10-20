@@ -1,8 +1,10 @@
-# InsulaT
+# Agent Moosh
 
 **A basic Insula-inspired non-LLM system learning to play the ARC-3 game efficiently**
 
-InsulaT's goal is to create starting point for empirically exploring approaches to developing Insula-inspired systems that can learn to play the ARC-3 games efficiently.
+AgentMoosh's goal is to create a starting point for empirically exploring approaches to developing Insula-inspired non-LLM systems that can learn to play the ARC-3 games efficiently.
+
+Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](https://three.arcprize.org/leaderboard) in one of our ablation test runs. We look forward to having it verified on private games once the verification process is open again. 
 
 **Key Features:**
 
@@ -12,24 +14,22 @@ InsulaT's goal is to create starting point for empirically exploring approaches 
   - **Memory reconsolidation with reward revaluation** assigns trajectory-level rewards during replay without corrupting episodic memory
   - **Multiple prediction heads** for simultaneous learning of productivity (change), quality (momentum), goal completion, and safety (gameover avoidance)
   - **Hierarchical action sampling** combining discrete actions (ACTION1-7) and coordinate-based actions via multiplicative probability combination
-  - **Importance-weighted replay** prioritizes critical events matching hippocampal memory consolidation
+  - **Importance-weighted replay** prioritizes critical events
   - **Online supervised learning** generates labels on-the-fly from game outcomes without reward engineering
-  - **Hierarchical temporal weighting** via head-specific decay rates creating multi-timescale learning (5/10/20 action focus windows)
-  - **Attention as neural integration** implementing biological integration principles through transformer layers
+  - **Hierarchical temporal weighting** via head-specific decay rates creating multi-timescale learning
+  - **Attention as neural integration** implementing biological integration principles through transformer operations
   - **Configurable transfer learning** with optional model/optimizer reset on level completion for ablation studies
+  - **Selected configurations** for ablation studies and empirical evaluation
 
 ---
 
-## Team
+## People
 
 Advisor: [Dan V. Nicolau]()
 
-Support: Dang Huu Tai, Ngan Dinh, Bang Dao, Steve Bickley, Aidan, David, [Panalogy Lab](), Insular AI
+Support: Dang Huu Tai, Ngan Dinh, [Bang Dao](https://www.linkedin.com/in/daotranbang?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app), [Steve Bickley](https://www.linkedin.com/in/steve-bickley/), [David Nasonov](https://www.linkedin.com/in/david-nasonov-323767250?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app), [Aidan Saldanha](https://www.linkedin.com/in/aidandsaldanha?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app), [Panalogy Lab](https://panalogy-lab.com), Insular AI
 
-Author: [Son Tran]()
-
-
-
+Author: [Son Tran](https://github.com/s27183)
 
 ---
 
