@@ -64,8 +64,9 @@ class InsulaConfig:
     # Multi-Head Prediction Architecture
     # TODO: enable/disable learned heads for ablation studies
     use_change_head: bool = True  # Always True (change head is required)
-    use_completion_head: bool = False  # Predict level completion (trajectory-level rewards)
-    use_gameover_head: bool = False  # Predict GAME_OVER avoidance (trajectory-level rewards)
+    use_momentum_head: bool = True # Always True (momentum head is required)
+    use_completion_head: bool = True  # Predict level completion (trajectory-level rewards)
+    use_gameover_head: bool = True  # Predict GAME_OVER avoidance (trajectory-level rewards)
 
     # ============================================================================
     # TRAINING CONFIGURATION
@@ -120,10 +121,10 @@ class InsulaConfig:
     # - γ closer to 0: Strong recency bias (focus on recent actions)
     # - γ closer to 1: Weak recency bias (nearly uniform weighting)
     # Computed to concentrate 80% of weight on target window for context_len=50
-    change_temporal_update_decay: float = 0.725  # Focus on recent 5 actions (immediate effects)
-    change_momentum_temporal_update_decay: float = 0.725  # Focus on recent 5 actions (same as change)
-    completion_temporal_update_decay: float = 0.851  # Focus on recent 10 actions (medium-term planning)
-    gameover_temporal_update_decay: float = 0.926  # Focus on recent 20 actions (long-term causality)
+    change_temporal_update_decay: float = 0.5  # Focus on recent 3 actions (immediate effects)
+    change_momentum_temporal_update_decay: float = 0.5  # Focus on recent 3 actions (same as change)
+    completion_temporal_update_decay: float = 0.95  # Focus on recent 20 actions (medium-term planning)
+    gameover_temporal_update_decay: float = 0.85  # Focus on recent 10 actions (long-term causality)
 
     # ============================================================================
     # EXPERIENCE REPLAY
@@ -163,6 +164,10 @@ class InsulaConfig:
         # Change head must always be enabled
         if not self.use_change_head:
             raise ValueError("use_change_head must be True (change head is required)")
+
+        # Momentum head must always be enabled
+        if not self.use_momentum_head:
+            raise ValueError("use_momentum_head must be True (momentum head is required)")
 
         # At least one head must be enabled
         if not (self.use_change_head or self.use_completion_head or self.use_gameover_head):
