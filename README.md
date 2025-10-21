@@ -8,18 +8,14 @@ Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](ht
 
 **Key Features:**
 
-  - **Insula-inspired multi-level integration** via Vision Transformer (ViT) and Decision Transformer (DT) for spatial-temporal processing
-  - **Multi-timestep forward prediction** trains on all timesteps in sequence (past + present) for sample efficiency
-  - **Hippocampal-inspired oversampling** with head-specific replay sizes prioritizing rare events (completion/gameover)
-  - **Memory reconsolidation with reward revaluation** assigns trajectory-level rewards during replay without corrupting episodic memory
-  - **Multiple prediction heads** for simultaneous learning of productivity (change), quality (momentum), goal completion, and safety (gameover avoidance)
-  - **Hierarchical action sampling** combining all available discrete actions and coordinate-based actions via multiplicative probability combination
-  - **Importance-weighted replay** prioritizes critical events
-  - **Online supervised learning** generates labels on-the-fly from game outcomes
-  - **Hierarchical temporal weighting** via head-specific decay rates creating multi-timescale learning
-  - **Attention as neural integration** implementing biological integration principles through transformer operations
-  - **Configurable transfer learning** with optional model/optimizer reset on level completion for ablation studies
-  - **Selected configurations** for ablation studies and empirical evaluation
+  - Insula-inspired multi-level integration spatial-temporal processing
+  - Multi-timestep forward prediction
+  - Hippocampal-inspired oversampling with importance-weighted replay
+  - Reward revaluation during replay
+  - Multiple prediction heads
+  - Hierarchical action sampling
+  - Online supervised learning generates labels on-the-fly from game outcomes 
+  - Configurations for ablation studies and empirical evaluation
 
 ---
 
