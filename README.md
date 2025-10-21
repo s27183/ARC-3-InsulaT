@@ -8,14 +8,13 @@ Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](ht
 
 **Key Features:**
 
-  - Insula-inspired multi-level integration spatial-temporal processing
+  - Multi-level spatial-temporal integration
   - Multi-timestep forward prediction
-  - Hippocampal-inspired oversampling with importance-weighted replay
-  - Reward revaluation during replay
-  - Multiple prediction heads
-  - Hierarchical action sampling
-  - Online supervised learning generates labels on-the-fly from game outcomes 
-  - Configurations for ablation studies and empirical evaluation
+  - Oversampling replay with temporal update weights
+  - Trajectory reward revaluation during replay
+  - Hierarchical action sampling covers both discrete and coordinate actions
+  - Online supervised learning  
+  - Extensive configurations for ablation studies and empirical evaluation
 
 ---
 
@@ -78,6 +77,8 @@ If you encounter this error when running the agent: `AttributeError: module 'PIL
 
 ```bash
 make play
+# Or with tags
+make play tags="test,configs"
 ```
 
 ### 5. View tensorboard logs

@@ -85,9 +85,9 @@ class InsulaConfig:
     epochs_per_training: int = 1  # Number of epochs per training session
 
     # Level Completion Behavior
-    reset_on_level_completion: bool = True  # Reset model/optimizer on level completion (ablation study)
-                                              # False (default): Transfer learning across levels?
-                                              # True: Fresh start each level (independent learning)
+    reset_on_level_completion: bool = False  # Reset model/optimizer on level completion (ablation study)
+                                              # False (default): Transfer learning across levels? - Good for games in which level's rules remain the same
+                                              # True: Fresh start each level (independent learning) - May be good for games with different rules per level
 
     #
 
