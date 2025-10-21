@@ -27,7 +27,7 @@ Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](ht
 
 Advisor: [Dan V. Nicolau](https://www.linkedin.com/in/dan-nicolau-384661219?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app)
 
-Support: Dang Huu Tai, Ngan Dinh, [Bang Dao](https://www.linkedin.com/in/daotranbang?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app), [Steve Bickley](https://www.linkedin.com/in/steve-bickley/), [David Nasonov](https://www.linkedin.com/in/david-nasonov-323767250?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app), [Aidan Saldanha](https://www.linkedin.com/in/aidandsaldanha?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app), [Panalogy Lab](https://panalogy-lab.com), Insular AI
+Support: Tram Dang, Ngan Dinh, [Bang Dao](https://www.linkedin.com/in/daotranbang?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app), [Steve Bickley](https://www.linkedin.com/in/steve-bickley/), [David Nasonov](https://www.linkedin.com/in/david-nasonov-323767250?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app), [Aidan Saldanha](https://www.linkedin.com/in/aidandsaldanha?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app), [Panalogy Lab](https://panalogy-lab.com), Insular AI
 
 Author: [Son Tran](https://github.com/s27183)
 
