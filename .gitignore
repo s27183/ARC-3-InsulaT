@@ -16,6 +16,8 @@
 .vscode/
 .idea/
 .cadence/
+.claude/
+.junie
 
 # Recordings
 recordings/*.recording.jsonl
