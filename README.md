@@ -96,7 +96,7 @@ Various configuration otpions can be set in the `insula_agent/config.py` file
 
 ---
 
-## File Structure
+## Project Structure
 
 ```
 ARC-3-InsulaT/
@@ -108,9 +108,7 @@ ARC-3-InsulaT/
 │   ├── play.py                # Main agent class (InsulaT) and game interaction logic
 │   ├── trainer.py             # Training functions (experience replay, loss computation, gradient updates)
 │   ├── utils.py               # Utility functions (logging setup, etc.)
-│   ├── docs/                  # Documentation (architecture descriptions, design notes)
 │   ├── logs/                  # Training logs and TensorBoard outputs
-│   └── tests/                 # Unit tests and integration tests
 ├── recordings/                # Game recordings (trajectory data from agent runs)
 ├── Makefile                   # Build commands (play, setup, tensorboard, clean)
 ├── pyproject.toml             # Python project metadata and dependencies
