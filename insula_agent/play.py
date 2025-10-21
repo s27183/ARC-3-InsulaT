@@ -32,7 +32,7 @@ Biological Inspiration:
 - VTA/SNc dopamine: Change/Completion heads (reward prediction)
 - Habenula/RMTg: GAME_OVER head (aversive prediction)
 - Hippocampal replay: Episodic memory with importance-weighted prioritization
-- Basal ganglia: Multiplicative integration of Go/NoGo pathways
+- Basal ganglia: Competitive gating of the three prediction heads to determine final action sampling.
 """
 
 from typing import Any
