@@ -32,7 +32,7 @@ Biological Inspiration:
 - VTA/SNc dopamine: Change/Completion heads (reward prediction)
 - Habenula/RMTg: GAME_OVER head (aversive prediction)
 - Hippocampal replay: Episodic memory with importance-weighted prioritization
-- Basal ganglia: Multiplicative integration of Go/NoGo pathways
+- Basal ganglia: Multiplicative integration of decision signals
 """
 
 from typing import Any
@@ -63,11 +63,11 @@ class InsulaT(Agent):
 
     Features:
     - State-action sequence modeling with hierarchical temporal context
-    - Triple-head prediction: Change/Completion/GAME_OVER
+    - Multiple-head prediction: Change/Momentum/Completion/GAME_OVER
     - Temperature-based exploration with action masking
     - Experience buffer for episodic replay
     - Temporal hindsight traces for retrospective action evaluation
-    - Importance-weighted replay (1:10:10 ratio)
+    - Importance-weighted replay
     - Full Agent interface compatibility
     """
 
@@ -722,7 +722,7 @@ class InsulaT(Agent):
     def _sample_action(
         self,
         change_logits: torch.Tensor,
-        change_momentum_logits: None | torch.Tensor,  # Always present (required head)
+        change_momentum_logits: None | torch.Tensor,  # Can be None if head disabled
         completion_logits: None | torch.Tensor ,  # Can be None if head disabled
         gameover_logits: None | torch.Tensor ,    # Can be None if head disabled
         available_actions=None,
@@ -731,7 +731,7 @@ class InsulaT(Agent):
 
         Args:
             change_logits: [4102] - Logits for predicting frame changes (always present)
-            change_momentum_logits: [4102] - Logits for predicting increasing change magnitude (always present)
+            change_momentum_logits: [4102] or None - Logits for predicting increasing change magnitude (optional)
             completion_logits: [4102] or None - Logits for predicting level completion (optional)
             gameover_logits: [4102] or None - Logits for predicting survival probability (optional)
             available_actions: List of available actions for masking
@@ -754,7 +754,7 @@ class InsulaT(Agent):
         change_action_logits = change_logits[:6]  # [6] - includes ACTION7
         change_coord_logits = change_logits[6:]  # [4096]
 
-        # Split change_momentum logits (always present)
+        # Split change_momentum logits (optional)
         if change_momentum_logits is not None:
             change_momentum_action_logits = change_momentum_logits[:6]  # [6] - includes ACTION7
             change_momentum_coord_logits = change_momentum_logits[6:]  # [4096]
@@ -798,7 +798,7 @@ class InsulaT(Agent):
             # Apply mask to change head (always present)
             change_action_logits = change_action_logits + action_mask
 
-            # Apply mask to change_momentum head (always present)
+            # Apply mask to change_momentum head (if present)
             if change_momentum_action_logits is not None:
                 change_momentum_action_logits = change_momentum_action_logits + action_mask
 
