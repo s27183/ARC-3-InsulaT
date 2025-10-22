@@ -816,7 +816,14 @@ class DecisionModel(nn.Module):
 
         Returns:
             decay: float in (0, 1], clamped to valid range
+
+        Raises:
+            AttributeError: If change_momentum head is disabled
         """
+        if not self.use_change_momentum_head:
+            raise AttributeError(
+                "change_momentum_decay_param not available when use_change_momentum_head=False"
+            )
         return torch.clamp(self.change_momentum_decay_param, min=1e-7, max=1.0).item()
 
     @property
@@ -825,7 +832,14 @@ class DecisionModel(nn.Module):
 
         Returns:
             decay: float in (0, 1], clamped to valid range
+
+        Raises:
+            AttributeError: If completion head is disabled
         """
+        if not self.use_completion_head:
+            raise AttributeError(
+                "completion_decay_param not available when use_completion_head=False"
+            )
         return torch.clamp(self.completion_decay_param, min=1e-7, max=1.0).item()
 
     @property
@@ -834,5 +848,12 @@ class DecisionModel(nn.Module):
 
         Returns:
             decay: float in (0, 1], clamped to valid range
+
+        Raises:
+            AttributeError: If gameover head is disabled
         """
+        if not self.use_gameover_head:
+            raise AttributeError(
+                "gameover_decay_param not available when use_gameover_head=False"
+            )
         return torch.clamp(self.gameover_decay_param, min=1e-7, max=1.0).item()
