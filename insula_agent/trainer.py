@@ -675,17 +675,25 @@ def train_model(
         # Log decay rates (if using learned decay)
         if config.use_learned_decay:
             # Access decay rates via model properties (works for both learned and fixed)
-            logger.info(
-                f"  Decay rates (epoch {epoch}): "
-                f"change={model.change_decay:.4f}, "
-                f"completion={model.completion_decay:.4f}, "
-                f"gameover={model.gameover_decay:.4f}"
-            )
+            # Build decay message with only enabled heads
+            decay_parts = [f"change={model.change_decay:.4f}"]
+            if config.use_change_momentum_head:
+                decay_parts.append(f"change_momentum={model.change_momentum_decay:.4f}")
+            if config.use_completion_head:
+                decay_parts.append(f"completion={model.completion_decay:.4f}")
+            if config.use_gameover_head:
+                decay_parts.append(f"gameover={model.gameover_decay:.4f}")
 
-            # Log to TensorBoard
+            logger.info(f"  Decay rates (epoch {epoch}): {', '.join(decay_parts)}")
+
+            # Log to TensorBoard (only enabled heads)
             writer.add_scalar("InsulaAgent/decay/change", model.change_decay, action_counter)
-            writer.add_scalar("InsulaAgent/decay/completion", model.completion_decay, action_counter)
-            writer.add_scalar("InsulaAgent/decay/gameover", model.gameover_decay, action_counter)
+            if config.use_change_momentum_head:
+                writer.add_scalar("InsulaAgent/decay/change_momentum", model.change_momentum_decay, action_counter)
+            if config.use_completion_head:
+                writer.add_scalar("InsulaAgent/decay/completion", model.completion_decay, action_counter)
+            if config.use_gameover_head:
+                writer.add_scalar("InsulaAgent/decay/gameover", model.gameover_decay, action_counter)
 
     # Log completion
     logger.info(

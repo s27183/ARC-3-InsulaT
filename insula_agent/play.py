@@ -9,15 +9,15 @@ Architecture (Five-Level Hierarchy):
 1. Cell Integration: Color + position → unified cell representation (insular-inspired)
 2. Spatial Integration (Posterior Insula): ViT processes 64×64 grid → spatial state
 3. Temporal Integration (Anterior Insula): Decision Transformer adds action history context
-4. Decision Projection (Insula→Striatum): Triple heads predict action probabilities
-5. Learning Systems (Hippocampus+Striatum): Replay with temporal hindsight traces
+4. Decision Projection (Multi-Dimensional Value Integration): Multiple heads predict action probabilities
+5. Learning Systems (Hippocampal Replay): Replay with temporal hindsight traces
 
 Components:
 - ViT State Encoder: Patch-based attention (8×8 patches) with learnable per-patch alpha
 - Action Embedding: Learned embeddings for 4102 actions (ACTION1-5, ACTION7 + 64x64 coordinates)
 - Decision Transformer: Causal attention over state-action sequences
-- Triple-Head Prediction: Change (exploration) + Completion (goal) + GAME_OVER (safety)
-- Multiplicative Action Sampling: Combines all three heads for balanced decisions
+- Multi-Head Prediction: Change (exploration) + Completion (goal) + GAME_OVER (safety)
+- Multi-Dimensional Value Integration: Combines multiple heads for balanced decisions
 
 Key Features:
 - Online supervised learning: Labels from game API outcomes (change/completion/gameover)
@@ -32,7 +32,7 @@ Biological Inspiration:
 - VTA/SNc dopamine: Change/Completion heads (reward prediction)
 - Habenula/RMTg: GAME_OVER head (aversive prediction)
 - Hippocampal replay: Episodic memory with importance-weighted prioritization
-- Basal ganglia: Multiplicative integration of Go/NoGo pathways
+- Basal ganglia-inspired: Multi-dimensional value integration (computational abstraction)
 """
 
 from typing import Any
@@ -63,11 +63,11 @@ class InsulaT(Agent):
 
     Features:
     - State-action sequence modeling with hierarchical temporal context
-    - Triple-head prediction: Change/Completion/GAME_OVER
+    - Multiple-head prediction: Change/Momentum/Completion/GAME_OVER
     - Temperature-based exploration with action masking
     - Experience buffer for episodic replay
     - Temporal hindsight traces for retrospective action evaluation
-    - Importance-weighted replay (1:10:10 ratio)
+    - Importance-weighted replay
     - Full Agent interface compatibility
     """
 
@@ -697,7 +697,7 @@ class InsulaT(Agent):
                 if "gameover_logits" in logits:
                     gameover_logits = logits["gameover_logits"].squeeze(0)  # [4102]
 
-                # Sample from combined action space (multiplicative combination with variable heads)
+                # Sample from combined action space (multi-dimensional value integration with variable heads)
                 action_idx, coords, coord_idx = self._sample_action(
                     change_logits, change_momentum_logits, completion_logits, gameover_logits, latest_frame.available_actions
                 )
@@ -722,16 +722,21 @@ class InsulaT(Agent):
     def _sample_action(
         self,
         change_logits: torch.Tensor,
-        change_momentum_logits: None | torch.Tensor,  # Always present (required head)
+        change_momentum_logits: None | torch.Tensor,  # Can be None if head disabled
         completion_logits: None | torch.Tensor ,  # Can be None if head disabled
         gameover_logits: None | torch.Tensor ,    # Can be None if head disabled
         available_actions=None,
     ) -> tuple[int, tuple | None, int | None]:
-        """Sample from combined action space using multiplicative combination of variable heads.
+        """Sample from combined action space using multi-dimensional value integration.
+
+        Biological Inspiration:
+            Basal ganglia integrate multiple value signals through distinct pathways for action selection.
+            Multiplicative combination serves as a computational abstraction of this multi-dimensional
+            integration, though biological mechanisms are more complex than simple multiplication.
 
         Args:
             change_logits: [4102] - Logits for predicting frame changes (always present)
-            change_momentum_logits: [4102] - Logits for predicting increasing change magnitude (always present)
+            change_momentum_logits: [4102] or None - Logits for predicting increasing change magnitude (optional)
             completion_logits: [4102] or None - Logits for predicting level completion (optional)
             gameover_logits: [4102] or None - Logits for predicting survival probability (optional)
             available_actions: List of available actions for masking
@@ -741,20 +746,20 @@ class InsulaT(Agent):
             coords: Coordinates if ACTION6 selected
             coord_idx: Flattened coordinate index
 
-        Reward Semantics:
+        Reward Semantics (Multi-Dimensional Value Signals):
             - change_reward: 1.0 = grid changed (productive), 0.0 = no change
             - change_momentum_reward: 1.0 = MORE cells changed than before (building momentum), 0.0 = fewer/equal
             - completion_reward: 1.0 = level completed, 0.0 = not completed
             - gameover_reward: 1.0 = survived (good), 0.0 = died (bad)
 
         All heads predict probabilities of POSITIVE outcomes (higher is better).
-        Multiplicative combination prefers actions scoring high on all enabled heads.
+        Multiplicative combination (computational abstraction) prefers actions scoring high on all enabled heads.
         """
         # Split change logits (always present)
         change_action_logits = change_logits[:6]  # [6] - includes ACTION7
         change_coord_logits = change_logits[6:]  # [4096]
 
-        # Split change_momentum logits (always present)
+        # Split change_momentum logits (optional)
         if change_momentum_logits is not None:
             change_momentum_action_logits = change_momentum_logits[:6]  # [6] - includes ACTION7
             change_momentum_coord_logits = change_momentum_logits[6:]  # [4096]
@@ -798,7 +803,7 @@ class InsulaT(Agent):
             # Apply mask to change head (always present)
             change_action_logits = change_action_logits + action_mask
 
-            # Apply mask to change_momentum head (always present)
+            # Apply mask to change_momentum head (if present)
             if change_momentum_action_logits is not None:
                 change_momentum_action_logits = change_momentum_action_logits + action_mask
 
