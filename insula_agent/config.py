@@ -239,13 +239,13 @@ def cpu_config() -> InsulaConfig:
         vit_num_heads=4,
         vit_cell_embed_dim=32,
         # Smaller replay sizes for faster training
-        change_replay_size=8,       # Shared by change and momentum heads
-        completion_replay_size=8,
-        gameover_replay_size=8,
+        change_replay_size=16,       # Shared by change and momentum heads
+        completion_replay_size=16,
+        gameover_replay_size=16,
         # CPU-specific decay rates (for context_len=25)
-        change_temporal_update_decay=0.725,
-        completion_temporal_update_decay=0.859,
-        gameover_temporal_update_decay=0.990,
+        change_temporal_update_decay=1.0,
+        completion_temporal_update_decay=0.85,
+        gameover_temporal_update_decay=0.95,
     )
 
 
@@ -266,7 +266,7 @@ def gpu_config() -> InsulaConfig:
         embed_dim=256,              # 256 → 384 (1.5x capacity)
         num_layers=4,               # 4 → 6 (deeper reasoning)
         num_heads=8,               # 8 → 12 (more attention patterns)
-        context_len=5,             # 25 → 50 (2x longer context)
+        context_len=5,             # 5 → 50? (2x longer context)
         # ViT architecture (keep same - spatial is already good)
         vit_num_layers=4,
         vit_num_heads=8,
@@ -276,9 +276,9 @@ def gpu_config() -> InsulaConfig:
         change_replay_size=64,      # Adaptive batch rarely hits this anyway
         completion_replay_size=64,  # Key: 32x oversampling still strong signal
         gameover_replay_size=64,    # Adaptive batch rarely hits this anyway
-        # Decay rates optimized for context_len=50
-        change_temporal_update_decay=0.5,          # Focus on recent 5 actions
-        change_momentum_temporal_update_decay=0.5, # Focus on recent 5 actions
+        # Decay rates
+        change_temporal_update_decay=1.0,          # Focus on recent 5 actions
+        change_momentum_temporal_update_decay=1.0, # Focus on recent 5 actions
         completion_temporal_update_decay=0.95,      # Focus on recent 20 actions
         gameover_temporal_update_decay=0.85,        # Focus on recent 10 actions
     )
