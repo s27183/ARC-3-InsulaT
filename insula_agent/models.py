@@ -610,193 +610,101 @@ class DecisionModel(nn.Module):
         if self.training:
             # === TRAINING MODE ===
             if temporal_credit:
-                # Predictions at ALL states for temporal credit assignment
-                # Extract ALL state representations (states at even positions: 0, 2, 4, ...)
-                state_reprs = transformer_output[:, ::2, :]  # [batch, seq_len+1, embed_dim]
+                state_reprs = transformer_output[:, ::2, :]  # [batch, seq_len+1, embed_dim] - states at even positions: 0, 2, 4, ...
 
-                # Multi-head prediction - Change head (always present)
-                change_action_logits = self.change_action_head(
-                    state_reprs
-                )  # [batch, seq_len+1, 6] - ACTION1-5 at each state
-                change_coord_logits = self.change_coord_head(
-                    state_reprs
-                )  # [batch, seq_len+1, 4096] - coordinates at each state
-                change_logits = torch.cat(
-                    [change_action_logits, change_coord_logits], dim=2
-                )  # [batch, seq_len+1, 4102] - concat on dim=2 for 3D tensors
+                change_action_logits = self.change_action_head(state_reprs)  # [batch, seq_len+1, 6]
+                change_coord_logits = self.change_coord_head(state_reprs)  # [batch, seq_len+1, 4096]
+                change_logits = torch.cat([change_action_logits, change_coord_logits], dim=2)  # [batch, seq_len+1, 4102]
 
-                # Change momentum head (optional)
                 if self.use_change_momentum_head:
-                    change_momentum_action_logits = self.change_momentum_head(
-                            state_reprs
-                    ) # [batch, seq_len+1, 6]
-                    change_momentum_coord_logits = self.change_momentum_coord_head(
-                            state_reprs
-                    ) # [batch, seq_len+1, 4096]
-                    change_momentum_logits = torch.cat(
-                        [change_momentum_action_logits, change_momentum_coord_logits], dim=2
-                    )  # [batch, seq_len+1, 4102] - concat on dim=2 for 3D tensors
+                    change_momentum_action_logits = self.change_momentum_head(state_reprs)  # [batch, seq_len+1, 6]
+                    change_momentum_coord_logits = self.change_momentum_coord_head(state_reprs)  # [batch, seq_len+1, 4096]
+                    change_momentum_logits = torch.cat([change_momentum_action_logits, change_momentum_coord_logits], dim=2)  # [batch, seq_len+1, 4102]
                 else:
                     change_momentum_logits = None
 
-                # Build output dict - always include change logits
                 output = {
-                        "change_logits": change_logits,
-                        "change_momentum_logits": change_momentum_logits,
+                    "change_logits": change_logits,
+                    "change_momentum_logits": change_momentum_logits,
                 }
 
-                # Completion head (optional)
                 if self.use_completion_head:
-                    completion_action_logits = self.completion_action_head(
-                        state_reprs
-                    )  # [batch, seq_len+1, 6]
-                    completion_coord_logits = self.completion_coord_head(
-                        state_reprs
-                    )  # [batch, seq_len+1, 4096]
-                    completion_logits = torch.cat(
-                        [completion_action_logits, completion_coord_logits], dim=2
-                    )  # [batch, seq_len+1, 4102]
+                    completion_action_logits = self.completion_action_head(state_reprs)  # [batch, seq_len+1, 6]
+                    completion_coord_logits = self.completion_coord_head(state_reprs)  # [batch, seq_len+1, 4096]
+                    completion_logits = torch.cat([completion_action_logits, completion_coord_logits], dim=2)  # [batch, seq_len+1, 4102]
                     output["completion_logits"] = completion_logits
 
-                # GAME_OVER head (optional)
                 if self.use_gameover_head:
-                    gameover_action_logits = self.gameover_action_head(
-                        state_reprs
-                    )  # [batch, seq_len+1, 6]
-                    gameover_coord_logits = self.gameover_coord_head(
-                        state_reprs
-                    )  # [batch, seq_len+1, 4096]
-                    gameover_logits = torch.cat(
-                        [gameover_action_logits, gameover_coord_logits], dim=2
-                    )  # [batch, seq_len+1, 4102]
+                    gameover_action_logits = self.gameover_action_head(state_reprs)  # [batch, seq_len+1, 6]
+                    gameover_coord_logits = self.gameover_coord_head(state_reprs)  # [batch, seq_len+1, 4096]
+                    gameover_logits = torch.cat([gameover_action_logits, gameover_coord_logits], dim=2)  # [batch, seq_len+1, 4102]
                     output["gameover_logits"] = gameover_logits
 
                 return output  # All [batch, seq_len+1, 4102]
 
             else:
-                # Prediction at FINAL state only (memory efficient)
-                # Extract final representation (current state)
                 final_repr = transformer_output[:, -1]  # [batch, embed_dim]
 
-                # Multi-head prediction - Change head (always present)
-                change_action_logits = self.change_action_head(
-                    final_repr
-                )  # [batch, 6] - ACTION1-5
-                change_coord_logits = self.change_coord_head(
-                    final_repr
-                )  # [batch, 4096] - coordinates
-                change_logits = torch.cat(
-                    [change_action_logits, change_coord_logits], dim=1
-                )  # [batch, 4102] - concat on dim=1 for 2D tensors
+                change_action_logits = self.change_action_head(final_repr)  # [batch, 6]
+                change_coord_logits = self.change_coord_head(final_repr)  # [batch, 4096]
+                change_logits = torch.cat([change_action_logits, change_coord_logits], dim=1)  # [batch, 4102]
 
-                # Change momentum head (optional)
                 if self.use_change_momentum_head:
-                    change_momentum_action_logits = self.change_momentum_head(
-                            final_repr
-                    ) # [batch, 6]
-                    change_momentum_coord_logits = self.change_momentum_coord_head(
-                            final_repr
-                    ) # [batch, 4096]
-                    change_momentum_logits = torch.cat(
-                        [change_momentum_action_logits, change_momentum_coord_logits], dim=1
-                    )
+                    change_momentum_action_logits = self.change_momentum_head(final_repr)  # [batch, 6]
+                    change_momentum_coord_logits = self.change_momentum_coord_head(final_repr)  # [batch, 4096]
+                    change_momentum_logits = torch.cat([change_momentum_action_logits, change_momentum_coord_logits], dim=1)  # [batch, 4102]
                 else:
                     change_momentum_logits = None
 
-                # Build output dict - always include change logits
                 output = {
-                        "change_logits": change_logits,
-                        "change_momentum_logits": change_momentum_logits
+                    "change_logits": change_logits,
+                    "change_momentum_logits": change_momentum_logits
                 }
 
-                # Completion head (optional)
                 if self.use_completion_head:
-                    completion_action_logits = self.completion_action_head(
-                        final_repr
-                    )  # [batch, 6]
-                    completion_coord_logits = self.completion_coord_head(
-                        final_repr
-                    )  # [batch, 4096]
-                    completion_logits = torch.cat(
-                        [completion_action_logits, completion_coord_logits], dim=1
-                    )  # [batch, 4102]
+                    completion_action_logits = self.completion_action_head(final_repr)  # [batch, 6]
+                    completion_coord_logits = self.completion_coord_head(final_repr)  # [batch, 4096]
+                    completion_logits = torch.cat([completion_action_logits, completion_coord_logits], dim=1)  # [batch, 4102]
                     output["completion_logits"] = completion_logits
 
-                # GAME_OVER head (optional)
                 if self.use_gameover_head:
-                    gameover_action_logits = self.gameover_action_head(
-                        final_repr
-                    )  # [batch, 6]
-                    gameover_coord_logits = self.gameover_coord_head(
-                        final_repr
-                    )  # [batch, 4096]
-                    gameover_logits = torch.cat(
-                        [gameover_action_logits, gameover_coord_logits], dim=1
-                    )  # [batch, 4102]
+                    gameover_action_logits = self.gameover_action_head(final_repr)  # [batch, 6]
+                    gameover_coord_logits = self.gameover_coord_head(final_repr)  # [batch, 4096]
+                    gameover_logits = torch.cat([gameover_action_logits, gameover_coord_logits], dim=1)  # [batch, 4102]
                     output["gameover_logits"] = gameover_logits
 
                 return output  # All [batch, 4102]
 
         else:
-            # === INFERENCE MODE: Prediction at FINAL state only (real-time forward modeling) ===
-            # Extract final representation (current state)
+            # === INFERENCE MODE ===
             final_repr = transformer_output[:, -1]  # [batch, embed_dim]
 
-            # Multi-head prediction - Change head (always present)
-            change_action_logits = self.change_action_head(
-                final_repr
-            )  # [batch, 6] - ACTION1-5, ACTION7
-            change_coord_logits = self.change_coord_head(
-                final_repr
-            )  # [batch, 4096] - coordinates
-            change_logits = torch.cat(
-                [change_action_logits, change_coord_logits], dim=1
-            )  # [batch, 4102] - concat on dim=1 for 2D tensors
+            change_action_logits = self.change_action_head(final_repr)  # [batch, 6]
+            change_coord_logits = self.change_coord_head(final_repr)  # [batch, 4096]
+            change_logits = torch.cat([change_action_logits, change_coord_logits], dim=1)  # [batch, 4102]
 
-            # Change momentum head (optional)
             if self.use_change_momentum_head:
-                change_momentum_action_logits = self.change_momentum_head(
-                        final_repr
-                ) # [batch, 6] - ACTION1-5, ACTION7
-                change_momentum_coord_logits = self.change_momentum_coord_head(
-                        final_repr
-                ) # [batch, 4096] - coordinates
-                change_momentum_logits = torch.cat(
-                    [change_momentum_action_logits, change_momentum_coord_logits], dim=1
-                ) # [batch, 4102] - concat on dim=1 for 2D tensors
+                change_momentum_action_logits = self.change_momentum_head(final_repr)  # [batch, 6]
+                change_momentum_coord_logits = self.change_momentum_coord_head(final_repr)  # [batch, 4096]
+                change_momentum_logits = torch.cat([change_momentum_action_logits, change_momentum_coord_logits], dim=1)  # [batch, 4102]
             else:
                 change_momentum_logits = None
 
-            # Build output dict - always include change logits
             output = {
-                    "change_logits": change_logits,
-                    "change_momentum_logits": change_momentum_logits
+                "change_logits": change_logits,
+                "change_momentum_logits": change_momentum_logits
             }
 
-            # Completion head (optional)
             if self.use_completion_head:
-                completion_action_logits = self.completion_action_head(
-                    final_repr
-                )  # [batch, 6]
-                completion_coord_logits = self.completion_coord_head(
-                    final_repr
-                )  # [batch, 4096]
-                completion_logits = torch.cat(
-                    [completion_action_logits, completion_coord_logits], dim=1
-                )  # [batch, 4102]
+                completion_action_logits = self.completion_action_head(final_repr)  # [batch, 6]
+                completion_coord_logits = self.completion_coord_head(final_repr)  # [batch, 4096]
+                completion_logits = torch.cat([completion_action_logits, completion_coord_logits], dim=1)  # [batch, 4102]
                 output["completion_logits"] = completion_logits
 
-            # GAME_OVER head (optional)
             if self.use_gameover_head:
-                gameover_action_logits = self.gameover_action_head(
-                    final_repr
-                )  # [batch, 6]
-                gameover_coord_logits = self.gameover_coord_head(
-                    final_repr
-                )  # [batch, 4096]
-                gameover_logits = torch.cat(
-                    [gameover_action_logits, gameover_coord_logits], dim=1
-                )  # [batch, 4102]
+                gameover_action_logits = self.gameover_action_head(final_repr)  # [batch, 6]
+                gameover_coord_logits = self.gameover_coord_head(final_repr)  # [batch, 4096]
+                gameover_logits = torch.cat([gameover_action_logits, gameover_coord_logits], dim=1)  # [batch, 4102]
                 output["gameover_logits"] = gameover_logits
 
             return output  # All [batch, 4102]

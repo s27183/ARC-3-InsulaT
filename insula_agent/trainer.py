@@ -366,14 +366,8 @@ def compute_head_loss(head_logits: torch.Tensor, target_actions: torch.Tensor, r
     Returns:
         loss: Scalar loss tensor (binary cross-entropy)
     """
-    # Gather only the logits for final actions
-    selected_logits = head_logits.gather(
-        dim=1, index=target_actions.unsqueeze(1)
-    ).squeeze(1)  # [batch]
-
-    # Binary cross-entropy with rewards as binary labels
+    selected_logits = head_logits.gather(dim=1, index=target_actions.unsqueeze(1)).squeeze(1)  # [batch]
     loss = F.binary_cross_entropy_with_logits(selected_logits, rewards)
-
     return loss
 
 
@@ -409,42 +403,27 @@ def compute_head_loss_with_temporal_credit(logits: torch.Tensor, all_action_indi
     """
     batch_size, seq_len, _ = logits.shape
 
-    # Compute temporal weights for ALL timesteps at once: [seq_len]
     # torch.arange(seq_len - 1, -1, -1) creates countdown: [seq_len-1, seq_len-2, ..., 1, 0]
-    # This represents "steps from end" for each timestep
-    # Example with seq_len=26: [25, 24, 23, ..., 1, 0]
+    # representing "steps from end" for each timestep
     steps_from_end = torch.arange(seq_len - 1, -1, -1, dtype=torch.float32, device=logits.device)  # [seq_len]
     temporal_weights = temporal_update_decay ** steps_from_end  # [seq_len]
 
-    # Select logits for actions taken at each timestep (vectorized gather)
-    # logits: [batch, seq_len, 4102]
-    # all_action_indices: [batch, seq_len]
-    # Need to expand indices to [batch, seq_len, 1] to gather along dim=2
     selected_logits = logits.gather(
-        dim=2,  # Gather along action dimension
+        dim=2,
         index=all_action_indices.unsqueeze(2)  # [batch, seq_len] → [batch, seq_len, 1]
-    ).squeeze(2)  # [batch, seq_len, 1] → [batch, seq_len]
+    ).squeeze(2)  # [batch, seq_len]
 
-    # Compute BCE loss for ALL timesteps at once: [batch, seq_len]
     losses = F.binary_cross_entropy_with_logits(
         selected_logits,  # [batch, seq_len]
         all_rewards,      # [batch, seq_len]
-        reduction='none'  # Keep per-example losses
+        reduction='none'
     )  # [batch, seq_len]
 
-    # Apply temporal weights via broadcasting: [batch, seq_len] * [seq_len]
     # Broadcasting expands temporal_weights to [1, seq_len], then element-wise multiply
     weighted_losses = losses * temporal_weights.unsqueeze(0)  # [batch, seq_len]
 
-    # Sum across both batch and time dimensions
-    total_loss = weighted_losses.sum()  # [batch, seq_len] → scalar
-
-    # Total weight = sum of temporal weights across time × batch size
-    # This normalizes by the "effective number of weighted examples"
+    total_loss = weighted_losses.sum()  # scalar
     total_weight = temporal_weights.sum() * batch_size  # scalar
-
-    # Normalize by cumulative weight to get weighted average loss
-    # Makes loss independent of batch size and sequence length
     loss = total_loss / total_weight
 
     return loss
@@ -481,50 +460,37 @@ def train_head_batch(
             - "batch_size": int
             - "seq_length": int
     """
-    # Convert sequences to tensors
     states_batch = torch.stack([seq["states"] for seq in sequences]).to(device)  # [B, seq_len+1, 64, 64]
     actions_batch = torch.stack([seq["actions"] for seq in sequences]).to(device)  # [B, seq_len]
-
-    # Get rewards and temporal credit data for this head
     all_action_indices = torch.stack([seq["all_action_indices"] for seq in sequences]).to(device)  # [B, seq_len+1]
 
     if head_type == "change":
         all_rewards = torch.stack([seq["all_change_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        temporal_decay = model.change_decay  # Use model property (learned or fixed)
+        temporal_decay = model.change_decay
     elif head_type == "change_momentum":
         all_rewards = torch.stack([seq["all_change_momentum_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        temporal_decay = model.change_momentum_decay  # Use model property (learned or fixed)
+        temporal_decay = model.change_momentum_decay
     elif head_type == "completion":
         all_rewards = torch.stack([seq["all_completion_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        temporal_decay = model.completion_decay  # Use model property (learned or fixed)
+        temporal_decay = model.completion_decay
     elif head_type == "gameover":
         all_rewards = torch.stack([seq["all_gameover_rewards"] for seq in sequences]).to(device)  # [B, seq_len+1]
-        temporal_decay = model.gameover_decay  # Use model property (learned or fixed)
+        temporal_decay = model.gameover_decay
     else:
         raise ValueError(f"Unknown head_type: {head_type}")
 
-    # Forward pass (model in training mode)
-    # Pass temporal_update flag to control whether to compute all timestep predictions or just final
     temporal_update = config.temporal_update
     logits_dict = model(states_batch, actions_batch, temporal_credit=temporal_update)
+    head_logits = logits_dict[f"{head_type}_logits"]  # [B, seq_len+1, 4102] if temporal_update else [B, 4102]
 
-    # Extract logits for this head
-    # Shape depends on temporal_update: [B, seq_len+1, 4102] if True, [B, 4102] if False
-    head_logits = logits_dict[f"{head_type}_logits"]
-
-    # Compute loss based on temporal_update config
     if temporal_update:
-        # Use temporal replay weighting (all actions with temporal decay)
         loss = compute_head_loss_with_temporal_credit(logits=head_logits, all_action_indices=all_action_indices,
                                                       all_rewards=all_rewards, temporal_update_decay=temporal_decay)
     else:
-        # Use only final action (no temporal credit)
-        target_actions = all_action_indices[:, -1]  # [B] - final action
-        rewards = all_rewards[:, -1]  # [B] - final reward
-
+        target_actions = all_action_indices[:, -1]  # [B]
+        rewards = all_rewards[:, -1]  # [B]
         loss = compute_head_loss(head_logits=head_logits, target_actions=target_actions, rewards=rewards)
 
-    # Backward pass (gradients accumulate in model.parameters())
     loss.backward()
 
     metrics = {
