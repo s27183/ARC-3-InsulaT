@@ -1,15 +1,14 @@
-# Agent Moosh
+# AgentMoosh
 
 **A basic Insula-inspired non-LLM system learning to play the ARC-AGI-3 games efficiently**
 
-Agent Moosh's goal is to create a starting point for empirically exploring approaches to developing Insula-inspired non-LLM systems that can learn to play the ARC-3 games efficiently.
+AgentMoosh's goal is to create a starting point for empirically exploring approaches to developing Insula-inspired non-LLM systems that can learn to play the ARC-3 games efficiently.
 
-Agent Moosh is currently ranked third on the [unverified ARC-AGI-3 leadboard](https://three.arcprize.org/leaderboard) in one of our test run configurations. We look forward to having it verified on private games once the verification process is open again. It's likely that the leaderboard position will change as more competitive agents will join the competition while we continue to develop the system and perform further experiments. 
+A preliminary test run put AgentMoosh at the third position on the [unverified ARC-AGI-3 leaderboard](https://three.arcprize.org/leaderboard). We look forward to having AgentMoosh verified on private games once the verification process is open again. It's likely that the leaderboard position will change quickly as more competitive agents join while we continue to develop the system and perform further experiments. 
 
 **Key Features:**
 
-  - Multi-level spatial-temporal integration
-  - Multi-timestep forward prediction
+  - Decision process with multi-level spatial-temporal integration 
   - Oversampling replay with temporal update weights
   - Trajectory reward revaluation during replay
   - Hierarchical action sampling covers both discrete and coordinate actions
