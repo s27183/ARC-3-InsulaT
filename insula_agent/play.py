@@ -426,7 +426,6 @@ class InsulaT(Agent):
             latest_frame_torch=current_frame, latest_frame=latest_frame
         )
 
-        # Store the current frame changes, current frame, and action for next experience creation
         # Keep as integer grid [H, W] with values 0-15 (int8 for memory efficiency)
         if self.prev_frame is not None:
             self.prev_frame_changes = np.count_nonzero(self.prev_frame != current_frame.cpu().numpy().astype(np.int8))
@@ -435,13 +434,11 @@ class InsulaT(Agent):
 
         self.prev_frame = current_frame.cpu().numpy().astype(np.int8)
 
-        # Store unified action index: 0-4 for ACTION1-5, 5 for ACTION7, 6+ for coordinates
-        if action_idx < 6:  # Changed: 5 → 6
+        if action_idx < 6:
             self.prev_action_idx = action_idx
         else:
-            self.prev_action_idx = 6 + coord_idx  # Changed: 5 → 6 (coordinate offset)
+            self.prev_action_idx = 6 + coord_idx
 
-        # Increment action counter
         self.action_counter += 1
 
         return selected_action
@@ -548,21 +545,16 @@ class InsulaT(Agent):
 
     def _store_experience(self, current_frame: torch.Tensor, latest_frame: FrameData):
         if self.prev_frame is not None:
-            # Convert current frame to numpy int8 for comparison (memory efficient - ARC colors are 0-15)
-            latest_frame_np = current_frame.cpu().numpy().astype(np.int8)
+            latest_frame_np = current_frame.cpu().numpy().astype(np.int8)  # ARC colors are 0-15
 
-            # Frame change
             frame_changed = not np.array_equal(self.prev_frame, latest_frame_np)
             frame_change_reward = 1.0 if (frame_changed and latest_frame.state is not GameState.GAME_OVER) else 0.0
 
-            # Frame change momentum (increasing change magnitude)
-            # Reward = 1.0 when current action changed MORE cells than previous action AND didn't cause GAME_OVER
+            # Frame change momentum: Reward = 1.0 when current action changed MORE cells than previous action
             # This captures "building momentum" toward impactful moves (e.g., pattern completion)
-            # Distinguishes meaningful progression from trivial/destructive exploratory moves
             frame_changes = np.count_nonzero(self.prev_frame != latest_frame_np)
             change_momentum_reward = 1.0 if (frame_changes > self.prev_frame_changes and latest_frame.state is not GameState.GAME_OVER) else 0.0
 
-            # Level completion
             level_completion = latest_frame.score != self.current_score
             level_completion_reward = 1.0 if level_completion else 0.0
 
@@ -572,58 +564,48 @@ class InsulaT(Agent):
 
             experience = {
                 "state": self.prev_frame,  # Integer grid [64, 64]
-                "action_idx": self.prev_action_idx,  # Unified action index
+                "action_idx": self.prev_action_idx,
                 "change_reward": frame_change_reward,
                 "change_momentum_reward": change_momentum_reward,
                 "completion_reward": level_completion_reward,
-                "gameover_reward": gameover_reward,  # 1.0 = survived, 0.0 = died
+                "gameover_reward": gameover_reward,
             }
 
             # Deduplication: Only when context_len == 1 (Markov case)
             # With context_len > 1, temporal sequences differ even if (state, action) repeats
             if self.config.context_len == 1:
-                # Compute hash of (state, action) pair
                 exp_hash = self._hash_experience(self.prev_frame, self.prev_action_idx)
 
                 if exp_hash not in self.experience_hash_set:
-                    # New unique experience - store it
                     self.experience_buffer.append(experience)
                     self.experience_hash_set.add(exp_hash)
-
                     self.logger.debug(
                         f"Stored unique experience (hash set size: {len(self.experience_hash_set)}, "
                         f"buffer size: {len(self.experience_buffer)})"
                     )
                 else:
-                    # Duplicate (state, action) pair - skip storage
                     self.logger.debug(
                         f"Skipped duplicate experience (state, action) already seen. "
                         f"Hash set size: {len(self.experience_hash_set)}"
                     )
-
-                    # Log duplicate count for analysis
                     self.writer.add_scalar(
                         "InsulaAgent/duplicate_experiences_skipped",
-                        1,  # Increment counter
+                        1,
                         self.action_counter,
                     )
             else:
-                # With context_len > 1, temporal order matters - always store
                 self.experience_buffer.append(experience)
-
                 self.logger.debug(
                     f"Stored experience (context_len={self.config.context_len} > 1, "
                     f"no deduplication applied)"
                 )
 
-            # Log replay buffer size periodically
             self.writer.add_scalar(
                 "InsulaAgent/replay_buffer_size",
                 len(self.experience_buffer),
                 self.action_counter,
             )
 
-            # Log hash set size when deduplication is active
             if self.config.context_len == 1:
                 self.writer.add_scalar(
                     "InsulaAgent/hash_set_size",
@@ -655,67 +637,48 @@ class InsulaT(Agent):
                     f"(unified for all heads: {', '.join(enabled_heads)})"
                 )
 
-            # Cold start - random valid action if no experience
             if len(self.experience_buffer) < 1:
-                selected_action = self._random_valid_action(
-                    latest_frame.available_actions
-                )
-                # Set default values for tracking
+                selected_action = self._random_valid_action(latest_frame.available_actions)
                 if selected_action.value <= 5:
-                    action_idx = selected_action.value - 1  # ACTION1-5 → indices 0-4
+                    action_idx = selected_action.value - 1
                     coord_idx = None
                 elif selected_action.value == 7:
-                    action_idx = 5  # ACTION7 → index 5
+                    action_idx = 5
                     coord_idx = None
-                else:  # ACTION6
-                    action_idx = 6  # Changed: 5 → 6 (coordinate offset)
+                else:
+                    action_idx = 6
                     coord_idx = 0
             else:
-                # Build state-action sequence for inference
-                states, actions = self._build_inference_sequence(
-                    latest_frame_torch, inference_context_len
-                )
-
-                # Get action logits from Insula (variable number of heads)
+                states, actions = self._build_inference_sequence(latest_frame_torch, inference_context_len)
                 logits = self.decision_model(states, actions)
 
-                # Always get change logits (required)
                 change_logits = logits["change_logits"].squeeze(0)  # [4102]
 
-                # Conditionally get change_momentum logits (optional)
                 change_momentum_logits = None
                 if "change_momentum_logits" in logits and logits["change_momentum_logits"] is not None:
                     change_momentum_logits = logits["change_momentum_logits"].squeeze(0)  # [4102]
 
-                # Conditionally get completion logits (optional)
                 completion_logits = None
                 if "completion_logits" in logits:
                     completion_logits = logits["completion_logits"].squeeze(0)  # [4102]
 
-                # Conditionally get gameover logits (optional)
                 gameover_logits = None
                 if "gameover_logits" in logits:
                     gameover_logits = logits["gameover_logits"].squeeze(0)  # [4102]
 
-                # Sample from combined action space (multi-dimensional value integration with variable heads)
                 action_idx, coords, coord_idx = self._sample_action(
                     change_logits, change_momentum_logits, completion_logits, gameover_logits, latest_frame.available_actions
                 )
 
-                # Create GameAction directly (following bandit pattern exactly)
-                if action_idx < 6:  # Changed: 5 → 6
-                    # Selected ACTION1-ACTION5 or ACTION7
+                if action_idx < 6:
                     selected_action = self.action_list[action_idx]
                     selected_action.reasoning = "discrete action prediction"
                 else:
-                    # Selected a coordinate - treat as ACTION6 (following bandit pattern exactly)
                     selected_action = GameAction.ACTION6
                     y, x = coords
                     selected_action.set_data({"x": x, "y": y})
                     selected_action.reasoning = "coordinate action prediction"
-                    self.logger.info(
-                        f"{self.game_id} - ACTION6: coordinates ({x}, {y}) -> coord_idx={coord_idx}"
-                    )
+                    self.logger.info(f"{self.game_id} - ACTION6: coordinates ({x}, {y}) -> coord_idx={coord_idx}")
 
         return action_idx, coord_idx, selected_action
 
@@ -755,67 +718,54 @@ class InsulaT(Agent):
         All heads predict probabilities of POSITIVE outcomes (higher is better).
         Multiplicative combination (computational abstraction) prefers actions scoring high on all enabled heads.
         """
-        # Split change logits (always present)
-        change_action_logits = change_logits[:6]  # [6] - includes ACTION7
+        change_action_logits = change_logits[:6]  # [6]
         change_coord_logits = change_logits[6:]  # [4096]
 
-        # Split change_momentum logits (optional)
         if change_momentum_logits is not None:
-            change_momentum_action_logits = change_momentum_logits[:6]  # [6] - includes ACTION7
+            change_momentum_action_logits = change_momentum_logits[:6]  # [6]
             change_momentum_coord_logits = change_momentum_logits[6:]  # [4096]
         else:
             change_momentum_action_logits = None
             change_momentum_coord_logits = None
 
-        # Split completion logits if present
         if completion_logits is not None:
-            completion_action_logits = completion_logits[:6]  # [6] - includes ACTION7
+            completion_action_logits = completion_logits[:6]  # [6]
             completion_coord_logits = completion_logits[6:]  # [4096]
         else:
             completion_action_logits = None
             completion_coord_logits = None
 
-        # Split gameover logits if present
         if gameover_logits is not None:
-            gameover_action_logits = gameover_logits[:6]  # [6] - includes ACTION7
+            gameover_action_logits = gameover_logits[:6]  # [6]
             gameover_coord_logits = gameover_logits[6:]  # [4096]
         else:
             gameover_action_logits = None
             gameover_coord_logits = None
 
-        # Apply masking based on available_actions if provided
         if available_actions is not None and len(available_actions) > 0:
-            # Create mask for action logits (ACTION1-ACTION5, ACTION7 = indices 0-5)
             action_mask = torch.full_like(change_action_logits, float("-inf"))
             action6_available = False
 
             for action in available_actions:
-                # Extract action value if it's a GameAction enum
                 action_id = action.value
-
-                if 1 <= action_id <= 5:  # ACTION1-ACTION5
-                    action_mask[action_id - 1] = 0.0  # Unmask valid actions
-                elif action_id == 6:  # ACTION6
+                if 1 <= action_id <= 5:
+                    action_mask[action_id - 1] = 0.0
+                elif action_id == 6:
                     action6_available = True
-                elif action_id == 7:  # ACTION7
-                    action_mask[5] = 0.0  # Unmask ACTION7 at index 5
+                elif action_id == 7:
+                    action_mask[5] = 0.0
 
-            # Apply mask to change head (always present)
             change_action_logits = change_action_logits + action_mask
 
-            # Apply mask to change_momentum head (if present)
             if change_momentum_action_logits is not None:
                 change_momentum_action_logits = change_momentum_action_logits + action_mask
 
-            # Apply mask to completion head if present
             if completion_action_logits is not None:
                 completion_action_logits = completion_action_logits + action_mask
 
-            # Apply mask to gameover head if present
             if gameover_action_logits is not None:
                 gameover_action_logits = gameover_action_logits + action_mask
 
-            # If ACTION6 (coordinate action) is not available, mask all coordinate logits
             if not action6_available:
                 coord_mask = torch.full_like(change_coord_logits, float("-inf"))
                 change_coord_logits = change_coord_logits + coord_mask
@@ -829,74 +779,50 @@ class InsulaT(Agent):
                 if gameover_coord_logits is not None:
                     gameover_coord_logits = gameover_coord_logits + coord_mask
 
-        # Apply sigmoid to convert logits to probabilities (change head always present)
         change_action_probs = torch.sigmoid(change_action_logits)  # [6]
         change_coord_probs = torch.sigmoid(change_coord_logits)  # [4096]
-
-        # Scale coordinate probabilities
         change_coord_probs_scaled = change_coord_probs / self.num_coordinates
-
-        # Combine action and coordinate probabilities for change head
         change_probs_sampling = torch.cat([change_action_probs, change_coord_probs_scaled])  # [4102]
         change_probs_sampling = change_probs_sampling / change_probs_sampling.sum()
 
-        # Start with change head probabilities (always present)
         probs_sampling = change_probs_sampling  # [4102]
 
-        # Multiply by change_momentum head probabilities if available
         if change_momentum_action_logits is not None:
             change_momentum_action_probs = torch.sigmoid(change_momentum_action_logits)  # [6]
             change_momentum_coord_probs = torch.sigmoid(change_momentum_coord_logits)  # [4096]
             change_momentum_coord_probs_scaled = change_momentum_coord_probs / self.num_coordinates
-
             change_momentum_probs_sampling = torch.cat([change_momentum_action_probs, change_momentum_coord_probs_scaled])  # [4102]
             change_momentum_probs_sampling = change_momentum_probs_sampling / change_momentum_probs_sampling.sum()
-
-            # Multiplicative combination
             probs_sampling = probs_sampling * change_momentum_probs_sampling  # [4102]
 
-        # Multiply by completion head probabilities if available
         if completion_action_logits is not None:
-            completion_action_probs = torch.sigmoid(completion_action_logits)  # [5]
+            completion_action_probs = torch.sigmoid(completion_action_logits)  # [6]
             completion_coord_probs = torch.sigmoid(completion_coord_logits)  # [4096]
             completion_coord_probs_scaled = completion_coord_probs / self.num_coordinates
-
             completion_probs_sampling = torch.cat([completion_action_probs, completion_coord_probs_scaled])  # [4102]
             completion_probs_sampling = completion_probs_sampling / completion_probs_sampling.sum()
-
-            # Multiplicative combination
             probs_sampling = probs_sampling * completion_probs_sampling  # [4102]
 
-        # Multiply by gameover head probabilities if available
         if gameover_action_logits is not None:
-            gameover_action_probs = torch.sigmoid(gameover_action_logits)  # [5]
+            gameover_action_probs = torch.sigmoid(gameover_action_logits)  # [6]
             gameover_coord_probs = torch.sigmoid(gameover_coord_logits)  # [4096]
             gameover_coord_probs_scaled = gameover_coord_probs / self.num_coordinates
-
             gameover_probs_sampling = torch.cat([gameover_action_probs, gameover_coord_probs_scaled])  # [4102]
             gameover_probs_sampling = gameover_probs_sampling / gameover_probs_sampling.sum()
-
             # IMPORTANT: Use gameover probabilities directly (NO inversion)
             # Reward semantics: gameover_reward=1.0 means SURVIVED (good), 0.0 means DIED (bad)
-            # Model predicts survival probability, so higher probs = safer actions we WANT
-            # Multiplicative combination: prefer actions with high survival probability
             probs_sampling = probs_sampling * gameover_probs_sampling  # [4102]
 
-        # Renormalize after multiplication (to ensure sum=1.0 for torch.multinomial)
         probs_sampling = probs_sampling / probs_sampling.sum()
-
-        # Sample from normalized space (stay on GPU for efficiency)
         selected_idx = torch.multinomial(probs_sampling, num_samples=1).item()
 
-        if selected_idx < 6:  # Changed: 5 → 6
-            # Selected one of ACTION1-ACTION5 or ACTION7
+        if selected_idx < 6:
             return selected_idx, None, None
         else:
-            # Selected a coordinate (index 6-4101)
-            coord_idx = selected_idx - 6  # Changed: 5 → 6 (coordinate offset)
+            coord_idx = selected_idx - 6
             y_idx = coord_idx // self.grid_size
             x_idx = coord_idx % self.grid_size
-            return 6, (y_idx, x_idx), coord_idx  # Changed: 5 → 6
+            return 6, (y_idx, x_idx), coord_idx
 
     def _random_valid_action(self, available_actions):
         """Generate random valid action for cold start or error fallback."""
