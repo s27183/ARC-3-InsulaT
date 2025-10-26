@@ -109,7 +109,7 @@ ARC-3-InsulaT/
 ├── Makefile                   # Build commands (play, setup, tensorboard, clean)
 ├── pyproject.toml             # Python project metadata and dependencies
 ├── uv.lock                    # Locked dependency versions
-├── main.py                    # Entry point (redirects to submodule)
+ submodule)
 └── README.md                  # This file
 ```
 
