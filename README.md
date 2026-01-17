@@ -4,7 +4,7 @@
 
 AgentMoosh's goal is to create a starting point for empirically exploring approaches to developing Insula-inspired non-LLM systems that can learn to play the ARC-3 games efficiently.
 
-A preliminary test run put AgentMoosh at the fifth position (and a variant on the fourth position) on the [unverified ARC-AGI-3 leaderboard](https://three.arcprize.org/leaderboard). We look forward to having AgentMoosh verified on private games once the verification process is open again. It's likely that the leaderboard position will change quickly as more competitive agents join while we continue to develop the system and perform further experiments. 
+A preliminary test run put AgentMoosh among the top 10 positions on the [unverified ARC-AGI-3 leaderboard](https://three.arcprize.org/leaderboard). We look forward to having AgentMoosh verified on private games once the verification process is open again. It's likely that the leaderboard position will change quickly as more competitive agents join while we continue to develop the system and perform further experiments. 
 
 **Key Features:**
 
